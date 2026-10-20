@@ -92,5 +92,5 @@ TV-series/episode handling, streaming or network shares as a server, multi-user 
 - [x] **M3 — Embedded mpv player.** In-window playback, controls, tracks, fullscreen, resume.
 - [x] **M4 — Re-encode queue & UI.** Badge/banner, plan preview + confirmation, background
   queue with progress/ETA/cancel, verification, "what to do with the original".
-- [ ] **M5 — Windows packaging.** GitHub Actions build/test, packaging script bundling
+- [x] **M5 — Windows packaging.** GitHub Actions build/test, packaging script bundling
   `libmpv-2.dll`/`ffmpeg.exe`/`ffprobe.exe`, README with licenses.
