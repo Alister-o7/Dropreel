@@ -46,6 +46,7 @@ Keep these files next to `DropReel.exe` (both packages include them):
 | `libmpv-2.dll` | Playing movies inside DropReel | Movies open in your default player instead |
 | `ffprobe.exe` | Durations, codecs, tracks | Movies are added without technical details |
 | `ffmpeg.exe` | Thumbnails and re-encoding | No frame posters, no re-encoding |
+| `av*.dll`, `sw*.dll` | FFmpeg libraries used by `ffmpeg.exe`/`ffprobe.exe` | Neither tool starts |
 
 You can also point DropReel at your own `ffmpeg`/`ffprobe` in **Settings**, or have them on `PATH`.
 
@@ -103,9 +104,10 @@ testing.
 - **libmpv-2.dll** — the latest `mpv-dev-x86_64-*.7z` from
   [shinchiro/mpv-winbuild-cmake](https://github.com/shinchiro/mpv-winbuild-cmake/releases)
   (override with `-MpvDevUrl`).
-- **ffmpeg.exe / ffprobe.exe** — `ffmpeg-master-latest-win64-gpl.zip` from
-  [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) (override with
-  `-FfmpegUrl`). The GPL build includes x264, x265 and the NVENC/AMF/QSV encoders.
+- **ffmpeg.exe / ffprobe.exe** and their DLLs — `ffmpeg-master-latest-win64-gpl-shared.zip`
+  from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) (override with
+  `-FfmpegUrl`; a static build works too). The GPL build includes x264, x265 and the
+  NVENC/AMF/QSV encoders; the shared variant keeps the package about half the size.
 
 The exact URLs used are written to `licenses\*.source.txt` in each package.
 
@@ -120,6 +122,7 @@ The packages bundle third-party software under its own licenses — see
   builds include GPL parts). DropReel loads it at run time, so a package containing it is
   distributed under the GPL; DropReel's MIT license is GPL-compatible and its source is this
   repository.
-- **FFmpeg** (`ffmpeg.exe`, `ffprobe.exe`) — GPL (BtbN "gpl" build). Run as separate programs.
+- **FFmpeg** (`ffmpeg.exe`, `ffprobe.exe` and their DLLs) — GPL (BtbN "gpl-shared" build). Run
+  as separate programs.
 - **Inter** font — SIL Open Font License 1.1. **Phosphor Icons** — MIT.
 - Rust crates — mostly MIT/Apache-2.0; the full list is generated into `licenses\rust-crates.txt`.

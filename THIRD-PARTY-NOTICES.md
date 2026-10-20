@@ -16,10 +16,10 @@ the GPL applies to that package as a whole. DropReel's MIT license is GPL-compat
 complete source is available at https://github.com/alister-o7/dropreel, which satisfies the
 source requirement for DropReel. Sources for mpv and its dependencies are at the links above.
 
-## FFmpeg — `ffmpeg.exe`, `ffprobe.exe`
+## FFmpeg — `ffmpeg.exe`, `ffprobe.exe` and the `av*.dll`/`sw*.dll` libraries
 
 - Project: https://ffmpeg.org — source: https://git.ffmpeg.org/ffmpeg.git
-- Windows build: https://github.com/BtbN/FFmpeg-Builds ("gpl" variant, which includes x264,
+- Windows build: https://github.com/BtbN/FFmpeg-Builds ("gpl-shared" variant, which includes x264,
   x265 and the NVENC/AMF/QSV hardware encoders; the exact URL is in
   `licenses/ffmpeg.source.txt`)
 - License: **GPL** (the build's license text is included as `licenses/ffmpeg-LICENSE.txt`).

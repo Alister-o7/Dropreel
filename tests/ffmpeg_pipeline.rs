@@ -13,6 +13,11 @@ use dropreel::tools::{self, Tools};
 fn tools_or_skip() -> Option<Tools> {
     let t = Tools::locate(&Settings::default());
     if t.ffmpeg.is_none() || t.ffprobe.is_none() {
+        // CI sets this so a missing ffmpeg fails loudly instead of silently skipping.
+        assert!(
+            std::env::var_os("DROPREEL_REQUIRE_FFMPEG").is_none(),
+            "ffmpeg/ffprobe not found"
+        );
         eprintln!("ffmpeg/ffprobe not found; skipping");
         return None;
     }

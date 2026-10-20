@@ -4,8 +4,9 @@
 
 .DESCRIPTION
     Stages (default: all):
-      deps     Download libmpv-2.dll (shinchiro/mpv-winbuild-cmake) and ffmpeg.exe/ffprobe.exe
-               (BtbN/FFmpeg-Builds, GPL build) into packaging\deps. Skipped if already there.
+      deps     Download libmpv-2.dll (shinchiro/mpv-winbuild-cmake) and ffmpeg.exe/ffprobe.exe with
+               their DLLs (BtbN/FFmpeg-Builds, GPL shared build) into packaging\deps. Skipped if
+               already there.
       build    cargo build --release
       package  Assemble dist\DropReel\, zip it to dist\DropReel-<version>-win64.zip and, if Inno
                Setup 6 is installed, build dist\DropReel-<version>-setup.exe.
@@ -25,7 +26,9 @@ param(
     [string]$Stage = 'all',
     # A specific mpv-dev-x86_64-*.7z; by default the newest shinchiro release is used.
     [string]$MpvDevUrl = '',
-    [string]$FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
+    # The "shared" build keeps the FFmpeg libraries in DLLs that ffmpeg.exe and ffprobe.exe share,
+    # which makes the package about half the size of two static executables.
+    [string]$FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip',
     [switch]$NoInstaller
 )
 
@@ -82,17 +85,26 @@ function Get-Deps {
         Set-Content -Path (Join-Path $deps 'libmpv.source.txt') -Value $url
     }
 
-    if (-not ((Test-Path (Join-Path $deps 'ffmpeg.exe')) -and (Test-Path (Join-Path $deps 'ffprobe.exe')))) {
+    $ffmpegMarker = Join-Path $deps 'ffmpeg.source.txt'
+    $haveFfmpeg = (Test-Path (Join-Path $deps 'ffprobe.exe')) -and (Test-Path $ffmpegMarker) -and
+        ((Get-Content $ffmpegMarker -Raw).Trim() -eq $FfmpegUrl)
+    if (-not $haveFfmpeg) {
+        # Remove any previous ffmpeg build (static or shared) before unpacking the new one.
+        Get-ChildItem $deps -File | Where-Object { $_.Name -match '^(ffmpeg|ffprobe)\.exe$|^(av|sw|postproc).*\.dll$' } | Remove-Item -Force
         Write-Host "Downloading ffmpeg from $FfmpegUrl"
         $zip = Join-Path $work 'ffmpeg.zip'
         Invoke-WebRequest -Uri $FfmpegUrl -OutFile $zip
         $out = Join-Path $work 'ffmpeg'
         Expand-Archive -Path $zip -DestinationPath $out -Force
+        $ffmpegExe = Get-ChildItem $out -Recurse -Filter 'ffmpeg.exe' | Select-Object -First 1
+        if (-not $ffmpegExe) { throw 'ffmpeg.exe was not found in the ffmpeg archive' }
+        $bin = $ffmpegExe.Directory.FullName
         foreach ($exe in 'ffmpeg.exe', 'ffprobe.exe') {
-            $file = Get-ChildItem $out -Recurse -Filter $exe | Select-Object -First 1
-            if (-not $file) { throw "$exe was not found in the ffmpeg archive" }
-            Copy-Item $file.FullName $deps
+            if (-not (Test-Path (Join-Path $bin $exe))) { throw "$exe was not found in the ffmpeg archive" }
+            Copy-Item (Join-Path $bin $exe) $deps
         }
+        # Shared builds: the FFmpeg libraries both executables need.
+        Get-ChildItem $bin -Filter '*.dll' | Copy-Item -Destination $deps
         $license = Get-ChildItem $out -Recurse -Filter 'LICENSE*' | Select-Object -First 1
         if ($license) { Copy-Item $license.FullName (Join-Path $deps 'ffmpeg-LICENSE.txt') }
         Set-Content -Path (Join-Path $deps 'ffmpeg.source.txt') -Value $FfmpegUrl
@@ -139,7 +151,9 @@ function New-Package {
     New-Item -ItemType Directory -Force $licenses | Out-Null
 
     Copy-Item $exe $stage
-    foreach ($file in 'libmpv-2.dll', 'ffmpeg.exe', 'ffprobe.exe') { Copy-Item (Join-Path $deps $file) $stage }
+    foreach ($file in 'ffmpeg.exe', 'ffprobe.exe') { Copy-Item (Join-Path $deps $file) $stage }
+    # libmpv-2.dll plus, for a shared ffmpeg build, its avcodec/avformat/... DLLs.
+    Get-ChildItem $deps -Filter '*.dll' | Copy-Item -Destination $stage
 
     Copy-Item (Join-Path $root 'LICENSE') (Join-Path $licenses 'DropReel-LICENSE.txt')
     Copy-Item (Join-Path $root 'THIRD-PARTY-NOTICES.md') $licenses
@@ -159,10 +173,11 @@ DropReel $version
 
 Run DropReel.exe. Drag movie files or folders onto the window to add them.
 
-Keep libmpv-2.dll, ffmpeg.exe and ffprobe.exe next to DropReel.exe:
+Keep the other files next to DropReel.exe:
   - libmpv-2.dll  plays movies inside the app
   - ffmpeg.exe    makes thumbnails and re-encodes large files to HEVC
   - ffprobe.exe   reads durations, codecs and tracks
+  - av*.dll, sw*.dll  FFmpeg libraries used by ffmpeg.exe and ffprobe.exe
 
 Your library and settings live in %APPDATA%\DropReel.
 Licenses for DropReel and the bundled components are in the licenses folder.

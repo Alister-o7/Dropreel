@@ -14,11 +14,17 @@ use dropreel::settings::{EncoderChoice, Settings};
 use dropreel::tools::{self, Tools};
 
 fn setup() -> Option<(Tools, Arc<EncoderDetector>)> {
+    // CI sets DROPREEL_REQUIRE_FFMPEG so a missing ffmpeg/x265 fails instead of skipping.
+    let required = std::env::var_os("DROPREEL_REQUIRE_FFMPEG").is_some();
     let tools = Tools::locate(&Settings::default());
+    if tools.ffmpeg.is_none() || tools.ffprobe.is_none() {
+        assert!(!required, "ffmpeg/ffprobe not found");
+        return None;
+    }
     let ffmpeg = tools.ffmpeg.clone()?;
-    tools.ffprobe.as_ref()?;
     let detector = Arc::new(EncoderDetector::default());
     if !detector.is_usable(&ffmpeg, Encoder::X265) {
+        assert!(!required, "libx265 unavailable");
         eprintln!("libx265 unavailable; skipping");
         return None;
     }
