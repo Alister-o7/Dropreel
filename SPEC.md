@@ -81,3 +81,16 @@ src/
 
 ## Out of scope (v1)
 TV-series/episode handling, streaming or network shares as a server, multi-user support, and macOS/Linux builds.
+
+## Milestones
+- [x] **M1 — Core engine (no UI).** SQLite library with migrations, import of files/folders,
+  duplicate detection and moved-file re-linking by fingerprint, filename → title/year parsing,
+  ffprobe details, frame-grab posters, optional TMDb client, folder watching, encoder detection
+  (NVENC → AMF → QSV → x265), bitrate planning, ffmpeg command lines, output verification.
+- [ ] **M2 — App window & library UI.** Drag & drop, poster grid + list view, search/sort/tags,
+  detail panel, missing-file "Locate…", import report, Settings window.
+- [ ] **M3 — Embedded mpv player.** In-window playback, controls, tracks, fullscreen, resume.
+- [ ] **M4 — Re-encode queue & UI.** Badge/banner, plan preview + confirmation, background
+  queue with progress/ETA/cancel, verification, "what to do with the original".
+- [ ] **M5 — Windows packaging.** GitHub Actions build/test, packaging script bundling
+  `libmpv-2.dll`/`ffmpeg.exe`/`ffprobe.exe`, README with licenses.
