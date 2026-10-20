@@ -83,7 +83,7 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 }
                 let label = shelf.label();
                 let selected = app.filter.shelf == shelf && app.filter.tag.is_none();
-                if widgets::nav_item(ui, icon, &label, Some(count), selected).clicked() {
+                if widgets::nav_item(ui, icon, label, Some(count), selected).clicked() {
                     app.filter.shelf = shelf;
                     app.filter.tag = None;
                     app.filter_dirty = true;
