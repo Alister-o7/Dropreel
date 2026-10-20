@@ -47,34 +47,12 @@ fn fatal(message: &str) {
         .show();
 }
 
-/// A simple app icon: a red rounded square with a white play triangle.
+/// The window icon (assets/icon.png).
 fn icon() -> egui::IconData {
-    const N: usize = 64;
-    let mut rgba = vec![0u8; N * N * 4];
-    for y in 0..N {
-        for x in 0..N {
-            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-            let r = 12.0;
-            let dx = (fx - fx.clamp(r, N as f32 - r)).abs();
-            let dy = (fy - fy.clamp(r, N as f32 - r)).abs();
-            let inside = dx * dx + dy * dy <= r * r;
-            // Play triangle with corners (24,18), (24,46), (46,32).
-            let in_triangle = fx >= 24.0 && (fy - 32.0).abs() <= (46.0 - fx) * 14.0 / 22.0;
-            let px = &mut rgba[(y * N + x) * 4..][..4];
-            if !inside {
-                continue;
-            }
-            px.copy_from_slice(if in_triangle {
-                &[255, 255, 255, 255]
-            } else {
-                &[200, 45, 45, 255]
-            });
-        }
-    }
-    egui::IconData {
-        rgba,
-        width: N as u32,
-        height: N as u32,
+    let decoded = image::load_from_memory(include_bytes!("../assets/icon.png")).map(|img| img.into_rgba8());
+    match decoded {
+        Ok(img) => egui::IconData { width: img.width(), height: img.height(), rgba: img.into_raw() },
+        Err(_) => egui::IconData::default(),
     }
 }
 

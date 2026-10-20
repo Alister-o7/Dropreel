@@ -53,6 +53,21 @@ fn find_tool(name: &str, configured: Option<&Path>) -> Option<PathBuf> {
     which::which(name).ok()
 }
 
+/// Like [`command`], but at below-normal CPU priority on Windows so a long encode doesn't make
+/// the UI or playback stutter.
+pub fn background_command(program: &Path) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = command(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        cmd.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
+    }
+    cmd
+}
+
 /// A `Command` that never opens a console window on Windows and has no stdin.
 pub fn command(program: &Path) -> Command {
     let mut cmd = Command::new(program);

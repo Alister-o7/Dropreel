@@ -1,0 +1,66 @@
+//! Phosphor icons (https://phosphoricons.com, MIT). The glyphs come from the bundled
+//! `Phosphor.ttf` (regular) and `Phosphor-Fill.ttf`; use [`super::theme::icon_fill`] for filled.
+
+#![allow(dead_code)]
+
+pub const ARROW_CLOCKWISE: &str = "\u{e036}";
+pub const ARROW_COUNTER_CLOCKWISE: &str = "\u{e038}";
+pub const ARROW_LEFT: &str = "\u{e058}";
+pub const ARROW_RIGHT: &str = "\u{e06c}";
+pub const ARROWS_IN: &str = "\u{e09a}";
+pub const CARET_DOWN: &str = "\u{e136}";
+pub const CHECK: &str = "\u{e182}";
+pub const CHECK_CIRCLE: &str = "\u{e184}";
+pub const CLOCK_COUNTER_CLOCKWISE: &str = "\u{e1a0}";
+pub const CLOUD_ARROW_DOWN: &str = "\u{e1ac}";
+pub const CORNERS_IN: &str = "\u{e1ce}";
+pub const CORNERS_OUT: &str = "\u{e1d0}";
+pub const CPU: &str = "\u{e610}";
+pub const CROSSHAIR: &str = "\u{e1d6}";
+pub const DATABASE: &str = "\u{e1de}";
+pub const DOTS_THREE_VERTICAL: &str = "\u{e208}";
+pub const EYE: &str = "\u{e220}";
+pub const FAST_FORWARD: &str = "\u{e6a6}";
+pub const FILE_VIDEO: &str = "\u{ea22}";
+pub const FILM_REEL: &str = "\u{e8c0}";
+pub const FILM_SLATE: &str = "\u{e8c2}";
+pub const FOLDER_OPEN: &str = "\u{e256}";
+pub const FOLDER_PLUS: &str = "\u{e258}";
+pub const FUNNEL: &str = "\u{e266}";
+pub const GEAR: &str = "\u{e270}";
+pub const GLOBE: &str = "\u{e288}";
+pub const GRAPHICS_CARD: &str = "\u{e612}";
+pub const HARD_DRIVES: &str = "\u{e2a0}";
+pub const HOURGLASS: &str = "\u{e2b8}";
+pub const IMAGE: &str = "\u{e2ca}";
+pub const INFO: &str = "\u{e2ce}";
+pub const LIGHTNING: &str = "\u{e2de}";
+pub const LIST: &str = "\u{e2f0}";
+pub const MAGNIFYING_GLASS: &str = "\u{e30c}";
+pub const MONITOR_PLAY: &str = "\u{e58c}";
+pub const MUSIC_NOTES: &str = "\u{e340}";
+pub const PAUSE: &str = "\u{e39e}";
+pub const PENCIL: &str = "\u{e3b4}";
+pub const PLAY: &str = "\u{e3d0}";
+pub const PLUS: &str = "\u{e3d4}";
+pub const POPCORN: &str = "\u{eb4e}";
+pub const RECYCLE: &str = "\u{e75a}";
+pub const REWIND: &str = "\u{e6a8}";
+pub const SLIDERS: &str = "\u{e434}";
+pub const SORT_ASCENDING: &str = "\u{e444}";
+pub const SORT_DESCENDING: &str = "\u{e446}";
+pub const SPARKLE: &str = "\u{e6a2}";
+pub const SPEAKER_HIGH: &str = "\u{e44a}";
+pub const SPEAKER_SLASH: &str = "\u{e45a}";
+pub const SPINNER: &str = "\u{e66a}";
+pub const SQUARES_FOUR: &str = "\u{e464}";
+pub const STACK: &str = "\u{e466}";
+pub const SUBTITLES: &str = "\u{e1a8}";
+pub const TAG: &str = "\u{e478}";
+pub const TELEVISION: &str = "\u{eae6}";
+pub const TIMER: &str = "\u{e492}";
+pub const TRASH: &str = "\u{e4a6}";
+pub const WARNING: &str = "\u{e4e0}";
+pub const WARNING_CIRCLE: &str = "\u{e4e2}";
+pub const X: &str = "\u{e4f6}";
+pub const X_CIRCLE: &str = "\u{e4f8}";

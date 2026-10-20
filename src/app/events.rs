@@ -35,6 +35,8 @@ pub enum AppEvent {
         result: Result<(), String>,
     },
     Toast(ToastKind, String),
+    EncodePreview(Box<crate::encode::EncodePreview>),
+    Encode(crate::encode::EncodeEvent),
 }
 
 /// Sends events to the UI and wakes it up.

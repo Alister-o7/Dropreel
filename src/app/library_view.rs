@@ -1,138 +1,418 @@
-//! Top bar, status bar, poster grid and list view.
+//! Sidebar, toolbar, poster grid and list view.
 
 use eframe::egui::{
-    self, Align, Color32, Id, Layout as UiLayout, Rect, RichText, Sense, Stroke, Vec2, vec2,
+    self, Align, Align2, Color32, Id, Layout as UiLayout, Margin, Rect, RichText, Sense, Stroke,
+    Vec2, pos2, vec2,
 };
 use egui_extras::{Column, TableBuilder};
 
-use super::state::{Layout, Library, SortKey};
-use super::widgets::{self, ACCENT, DANGER, WARN};
-use super::{Action, DropReelApp};
-use crate::library::Movie;
-use crate::util::{format_bytes, format_date, format_duration};
+use super::icons;
+use super::state::{Layout, Library, Shelf, SortKey};
+use super::theme::{self, palette};
+use super::widgets::{self, ButtonKind};
+use super::{Action, DropReelApp, EncodeBadge};
+use crate::library::{Movie, MovieId};
+use crate::util::format_bytes;
 
-const CARD_W: f32 = 154.0;
-const POSTER_H: f32 = 231.0;
-const TEXT_H: f32 = 44.0;
-const GAP: f32 = 16.0;
+const MIN_CARD_W: f32 = 158.0;
+const TEXT_H: f32 = 48.0;
+const GAP: f32 = 20.0;
 
-pub fn top_bar(app: &mut DropReelApp, ui: &mut egui::Ui) {
-    let frame =
-        egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(12, 8));
-    egui::Panel::top("top_bar").frame(frame).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("🎬 DropReel").size(20.0).strong());
-            ui.add_space(8.0);
-            if ui.button("+ Add files…").clicked() {
+pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
+    let p = palette(ui.ctx());
+    let frame = egui::Frame::new().fill(p.surface).inner_margin(Margin {
+        left: 14,
+        right: 14,
+        top: 16,
+        bottom: 14,
+    });
+    egui::Panel::left("sidebar")
+        .exact_size(236.0)
+        .frame(frame)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add(egui::Image::new(theme::APP_ICON_URI).fit_to_exact_size(vec2(30.0, 30.0)));
+                ui.add_space(2.0);
+                ui.label(theme::bold("DropReel").size(19.0).color(p.text));
+            });
+            ui.add_space(14.0);
+            let width = ui.available_width();
+            if widgets::button_sized(
+                ui,
+                ButtonKind::Primary,
+                Some(icons::PLUS),
+                "Add movies",
+                width,
+                true,
+            )
+            .on_hover_text("Pick video files — or just drag them onto the window")
+            .clicked()
+            {
                 app.actions.push(Action::AddFiles);
             }
-            if ui.button("📁 Add folder…").clicked() {
+            ui.add_space(2.0);
+            if widgets::button_sized(
+                ui,
+                ButtonKind::Secondary,
+                Some(icons::FOLDER_PLUS),
+                "Add folder",
+                width,
+                true,
+            )
+            .clicked()
+            {
                 app.actions.push(Action::AddFolder);
             }
-            ui.separator();
+            ui.add_space(10.0);
 
-            let search = ui.add(
-                egui::TextEdit::singleline(&mut app.filter.search)
-                    .id(Id::unique("search"))
-                    .hint_text("🔍 Search titles  (Ctrl+F)")
-                    .desired_width(220.0),
-            );
-            if search.changed() {
-                app.filter_dirty = true;
-            }
-            if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
-                search.request_focus();
-            }
-            if !app.filter.search.is_empty()
-                && ui.small_button("✖").on_hover_text("Clear search").clicked()
-            {
-                app.filter.search.clear();
-                app.filter_dirty = true;
+            widgets::section_label(ui, "Library");
+            let threshold = app.settings.threshold_bytes();
+            let shelves = [
+                (Shelf::All, icons::FILM_SLATE),
+                (Shelf::ContinueWatching, icons::CLOCK_COUNTER_CLOCKWISE),
+                (Shelf::Unwatched, icons::EYE),
+                (Shelf::Watched, icons::CHECK_CIRCLE),
+                (Shelf::Large, icons::LIGHTNING),
+                (Shelf::Missing, icons::WARNING_CIRCLE),
+            ];
+            for (shelf, icon) in shelves {
+                let count = app.lib.shelf_count(shelf, threshold);
+                if matches!(shelf, Shelf::Missing | Shelf::ContinueWatching)
+                    && count == 0
+                    && app.filter.shelf != shelf
+                {
+                    continue;
+                }
+                let label = if shelf == Shelf::Large {
+                    format!("Over {} GB", app.settings.threshold_gb)
+                } else {
+                    shelf.label().to_string()
+                };
+                let selected = app.filter.shelf == shelf && app.filter.tag.is_none();
+                if widgets::nav_item(ui, icon, &label, Some(count), selected).clicked() {
+                    app.filter.shelf = shelf;
+                    app.filter.tag = None;
+                    app.filter_dirty = true;
+                }
             }
 
-            let before = (app.filter.sort, app.filter.descending, app.filter.tag);
-            egui::ComboBox::from_id_salt("sort")
-                .selected_text(format!("Sort: {}", app.filter.sort.label()))
-                .show_ui(ui, |ui| {
-                    for key in SortKey::ALL {
-                        if ui
-                            .selectable_value(&mut app.filter.sort, key, key.label())
-                            .clicked()
+            if app.encode_running.is_some() || !app.encode_queued.is_empty() {
+                ui.add_space(8.0);
+                widgets::section_label(ui, "Re-encoding");
+                queue_card(app, ui);
+            }
+
+            ui.add_space(8.0);
+            widgets::section_label(ui, "Tags");
+            if app.lib.tags.is_empty() {
+                ui.label(
+                    RichText::new("Tag movies from their details panel.")
+                        .size(12.5)
+                        .color(p.text_weak),
+                );
+            }
+            egui::ScrollArea::vertical()
+                .id_salt("tag_scroll")
+                .max_height((ui.available_height() - 40.0).max(60.0))
+                .show(ui, |ui| {
+                    for tag in &app.lib.tags {
+                        let selected = app.filter.tag == Some(tag.id);
+                        if widgets::nav_item(
+                            ui,
+                            icons::TAG,
+                            &tag.name,
+                            Some(app.lib.tag_count(tag.id)),
+                            selected,
+                        )
+                        .clicked()
                         {
-                            app.filter.descending = key.default_descending();
+                            app.filter.tag = if selected { None } else { Some(tag.id) };
+                            app.filter.shelf = Shelf::All;
+                            app.filter_dirty = true;
                         }
                     }
                 });
-            let arrow = if app.filter.descending { "⬇" } else { "⬆" };
-            if ui.button(arrow).on_hover_text("Reverse order").clicked() {
-                app.filter.descending = !app.filter.descending;
-            }
 
-            let tag_label = app
+            ui.with_layout(UiLayout::bottom_up(Align::Min), |ui| {
+                let total = app.lib.movies.len();
+                ui.label(
+                    RichText::new(format!(
+                        "{total} movies · {}",
+                        format_bytes(app.lib.total_size())
+                    ))
+                    .size(12.0)
+                    .color(p.text_weak),
+                );
+            });
+        });
+}
+
+/// The encode queue status card at the bottom of the sidebar.
+fn queue_card(app: &mut DropReelApp, ui: &mut egui::Ui) {
+    let p = palette(ui.ctx());
+    let Some(status) = app.encode_running.clone() else {
+        if !app.encode_queued.is_empty() {
+            ui.label(
+                RichText::new(format!(
+                    "{} {} waiting to encode",
+                    icons::HOURGLASS,
+                    app.encode_queued.len()
+                ))
+                .color(p.text_weak),
+            );
+        }
+        return;
+    };
+    let resp = egui::Frame::new()
+        .fill(p.raised)
+        .corner_radius(12)
+        .inner_margin(12)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(theme::icon_fill(icons::LIGHTNING).size(16.0).color(p.warn));
+                ui.label(
+                    theme::semibold(status.stage.label())
+                        .size(13.0)
+                        .color(p.text),
+                );
+                if !app.encode_queued.is_empty() {
+                    ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!("+{}", app.encode_queued.len()))
+                                .size(12.0)
+                                .color(p.text_weak),
+                        )
+                        .on_hover_text(
+                            app.encode_queued
+                                .iter()
+                                .map(|(_, t)| t.as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        );
+                    });
+                }
+            });
+            ui.add(
+                egui::Label::new(RichText::new(&status.title).size(12.5).color(p.text_weak))
+                    .truncate(),
+            );
+            widgets::progress_bar(ui, status.fraction, p.accent, 6.0);
+            ui.label(
+                RichText::new(encode_progress_text(&status))
+                    .size(12.0)
+                    .color(p.text_weak),
+            );
+        })
+        .response
+        .interact(Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Show details");
+    if resp.clicked() {
+        app.actions.push(Action::ShowDetails(status.movie_id));
+    }
+}
+
+/// "42% · 12 min left · 2.1×"
+pub fn encode_progress_text(s: &crate::encode::EncodeStatus) -> String {
+    let mut parts = vec![format!("{:.0}%", s.fraction * 100.0)];
+    if let Some(eta) = s.eta {
+        let mins = (eta.as_secs_f64() / 60.0).ceil() as u64;
+        parts.push(if mins >= 60 {
+            format!("{}h {:02}m left", mins / 60, mins % 60)
+        } else {
+            format!("{mins} min left")
+        });
+    }
+    if let Some(speed) = s.speed {
+        parts.push(format!("{speed:.1}×"));
+    }
+    parts.join(" · ")
+}
+
+pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
+    let p = palette(ui.ctx());
+    let frame = egui::Frame::new().fill(p.bg).inner_margin(Margin {
+        left: 28,
+        right: 20,
+        top: 18,
+        bottom: 10,
+    });
+    egui::Panel::top("toolbar").frame(frame).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            let title = match app
                 .filter
                 .tag
                 .and_then(|t| app.lib.tags.iter().find(|tag| tag.id == t))
-                .map_or("All tags".to_string(), |t| format!("🏷 {}", t.name));
-            egui::ComboBox::from_id_salt("tag_filter")
-                .selected_text(tag_label)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut app.filter.tag, None, "All tags");
-                    for tag in &app.lib.tags {
-                        ui.selectable_value(&mut app.filter.tag, Some(tag.id), &tag.name);
-                    }
-                });
-            if before != (app.filter.sort, app.filter.descending, app.filter.tag) {
-                app.filter_dirty = true;
-            }
+            {
+                Some(tag) => format!("{} {}", icons::TAG, tag.name),
+                None if app.filter.shelf == Shelf::Large => {
+                    format!("Over {} GB", app.settings.threshold_gb)
+                }
+                None => app.filter.shelf.label().to_string(),
+            };
+            ui.label(theme::bold(title).size(24.0).color(p.text));
+            ui.label(
+                RichText::new(app.visible.len().to_string())
+                    .size(15.0)
+                    .color(p.text_weak),
+            );
 
             ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-                if ui.button("⚙ Settings").clicked() {
+                if widgets::icon_button(ui, icons::GEAR, "Settings").clicked() {
                     app.actions.push(Action::OpenSettings);
                 }
-                ui.separator();
-                ui.selectable_value(&mut app.prefs.layout, Layout::List, "☰ List");
-                ui.selectable_value(&mut app.prefs.layout, Layout::Grid, "⊞ Grid");
+                ui.add_space(4.0);
+                egui::Frame::new()
+                    .fill(p.raised)
+                    .corner_radius(10)
+                    .inner_margin(2)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        if widgets::icon_toggle(
+                            ui,
+                            icons::LIST,
+                            app.prefs.layout == Layout::List,
+                            "List view",
+                        )
+                        .clicked()
+                        {
+                            app.prefs.layout = Layout::List;
+                        }
+                        if widgets::icon_toggle(
+                            ui,
+                            icons::SQUARES_FOUR,
+                            app.prefs.layout == Layout::Grid,
+                            "Poster grid",
+                        )
+                        .clicked()
+                        {
+                            app.prefs.layout = Layout::Grid;
+                        }
+                    });
+                ui.add_space(4.0);
+                let dir_icon = if app.filter.descending {
+                    icons::SORT_DESCENDING
+                } else {
+                    icons::SORT_ASCENDING
+                };
+                if widgets::icon_button(ui, dir_icon, "Reverse order").clicked() {
+                    app.filter.descending = !app.filter.descending;
+                    app.filter_dirty = true;
+                }
+                let before = app.filter.sort;
+                egui::ComboBox::from_id_salt("sort")
+                    .selected_text(format!("Sort: {}", app.filter.sort.label()))
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        for key in SortKey::ALL {
+                            ui.selectable_value(&mut app.filter.sort, key, key.label());
+                        }
+                    });
+                if before != app.filter.sort {
+                    app.filter.descending = app.filter.sort.default_descending();
+                    app.filter_dirty = true;
+                }
+                ui.add_space(6.0);
+                // Leave room for the title on narrow windows.
+                let search_w = (ui.available_width() - 260.0).clamp(120.0, 250.0);
+                search_box(app, ui, search_w);
+                if app.imports_running > 0 {
+                    ui.add_space(8.0);
+                    let text = match app.import_progress {
+                        Some(super::ImportProgress::Reading { done, total }) => {
+                            format!("Reading {done}/{total}")
+                        }
+                        Some(super::ImportProgress::Metadata { done, total }) => {
+                            format!("Posters {done}/{total}")
+                        }
+                        _ => "Scanning…".to_string(),
+                    };
+                    ui.label(RichText::new(text).color(p.text_weak));
+                    ui.add(egui::Spinner::new().size(16.0).color(p.accent));
+                }
             });
         });
     });
 }
 
-pub fn status_bar(app: &mut DropReelApp, ui: &mut egui::Ui) {
-    let frame =
-        egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(12, 4));
-    egui::Panel::bottom("status_bar").frame(frame).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            let total = app.lib.movies.len();
-            let mut text = format!("{total} movies · {}", format_bytes(app.lib.total_size()));
-            if app.visible.len() != total {
-                text.push_str(&format!(" · showing {}", app.visible.len()));
-            }
-            ui.weak(text);
-            if !app.lib.missing.is_empty() {
-                ui.colored_label(DANGER, format!("⚠ {} missing", app.lib.missing.len()))
-                    .on_hover_text("These files are not where they used to be. Open a movie and use Locate…, or add the folder they moved to as a watched folder.");
-            }
-            ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-                if app.imports_running > 0 {
-                    let text = match app.import_progress {
-                        Some(super::ImportProgress::Reading { done, total }) => format!("Reading files {done}/{total}"),
-                        Some(super::ImportProgress::Metadata { done, total }) => format!("Fetching posters {done}/{total}"),
-                        _ => "Scanning…".to_string(),
+fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
+    let p = palette(ui.ctx());
+    let search_id = Id::unique("search");
+    let focused = ui.memory(|m| m.has_focus(search_id));
+    let stroke = if focused {
+        Stroke::new(1.5, p.accent)
+    } else {
+        Stroke::new(1.0, p.border)
+    };
+    egui::Frame::new()
+        .fill(p.input)
+        .stroke(stroke)
+        .corner_radius(255)
+        .inner_margin(Margin::symmetric(12, 4))
+        .show(ui, |ui| {
+            // The toolbar lays out right-to-left; the search box itself reads left-to-right.
+            ui.allocate_ui_with_layout(
+                vec2(width, 26.0),
+                UiLayout::left_to_right(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.label(
+                        RichText::new(icons::MAGNIFYING_GLASS)
+                            .size(16.0)
+                            .color(p.text_weak),
+                    );
+                    let edit = ui.add(
+                        egui::TextEdit::singleline(&mut app.filter.search)
+                            .id(search_id)
+                            .frame(egui::Frame::NONE)
+                            .hint_text(if width > 200.0 {
+                                "Search movies  (Ctrl+F)"
+                            } else {
+                                "Search"
+                            })
+                            .desired_width(width - 54.0),
+                    );
+                    if edit.changed() {
+                        app.filter_dirty = true;
+                    }
+                    if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
+                        edit.request_focus();
+                    }
+                    let clear = if app.filter.search.is_empty() {
+                        " "
+                    } else {
+                        icons::X_CIRCLE
                     };
-                    ui.label(text);
-                    ui.spinner();
-                }
-            });
+                    if ui
+                        .add(
+                            egui::Label::new(RichText::new(clear).size(16.0).color(p.text_weak))
+                                .sense(Sense::click()),
+                        )
+                        .on_hover_text("Clear")
+                        .clicked()
+                    {
+                        app.filter.search.clear();
+                        app.filter_dirty = true;
+                    }
+                },
+            );
         });
-    });
 }
 
 pub fn central(app: &mut DropReelApp, ui: &mut egui::Ui) {
-    egui::CentralPanel::default().show(ui, |ui| {
+    let p = palette(ui.ctx());
+    let frame = egui::Frame::new().fill(p.bg).inner_margin(Margin {
+        left: 28,
+        right: 12,
+        top: 6,
+        bottom: 0,
+    });
+    egui::CentralPanel::default().frame(frame).show(ui, |ui| {
         if app.lib.movies.is_empty() {
             empty_state(app, ui);
         } else if app.visible.is_empty() {
-            ui.centered_and_justified(|ui| ui.weak("No movies match the search or tag filter."));
+            no_results(ui);
         } else {
             match app.prefs.layout {
                 Layout::Grid => grid(app, ui),
@@ -142,23 +422,87 @@ pub fn central(app: &mut DropReelApp, ui: &mut egui::Ui) {
     });
 }
 
+fn hero_icon(ui: &mut egui::Ui, icon: &str, size: f32) {
+    let p = palette(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size * 2.8), Sense::hover());
+    let painter = ui.painter();
+    // A soft glow: fading rings around the accent disc.
+    for (scale, alpha) in [(1.4, 0.06), (1.25, 0.10), (1.12, 0.16)] {
+        painter.circle_filled(rect.center(), size * scale, p.accent.gamma_multiply(alpha));
+    }
+    painter.circle_filled(rect.center(), size, p.accent);
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        icon,
+        theme::icon_fill_font(size * 0.95),
+        Color32::WHITE,
+    );
+}
+
 fn empty_state(app: &mut DropReelApp, ui: &mut egui::Ui) {
+    let p = palette(ui.ctx());
     ui.vertical_centered(|ui| {
-        ui.add_space((ui.available_height() / 2.0 - 110.0).max(20.0));
-        ui.label(RichText::new("🎬").size(64.0));
-        ui.label(RichText::new("Your library is empty").size(24.0).strong());
+        ui.add_space((ui.available_height() / 2.0 - 190.0).max(30.0));
+        hero_icon(ui, icons::POPCORN, 58.0);
+        ui.add_space(18.0);
+        ui.label(
+            theme::bold("Your library is empty")
+                .size(28.0)
+                .color(p.text),
+        );
         ui.add_space(4.0);
-        ui.weak("Drag movie files or folders anywhere onto this window.");
-        ui.add_space(16.0);
-        ui.horizontal(|ui| {
-            ui.add_space((ui.available_width() - 250.0).max(0.0) / 2.0);
-            if ui.button("+ Add files…").clicked() {
-                app.actions.push(Action::AddFiles);
-            }
-            if ui.button("📁 Add folder…").clicked() {
-                app.actions.push(Action::AddFolder);
-            }
-        });
+        ui.label(
+            RichText::new("Drag movie files or whole folders anywhere onto this window.")
+                .size(15.0)
+                .color(p.text_weak),
+        );
+        ui.add_space(20.0);
+        let total_w = 320.0;
+        ui.allocate_ui_with_layout(
+            vec2(total_w, 36.0),
+            UiLayout::left_to_right(Align::Center),
+            |ui| {
+                if widgets::button(ui, ButtonKind::Primary, Some(icons::PLUS), "Add movies")
+                    .clicked()
+                {
+                    app.actions.push(Action::AddFiles);
+                }
+                if widgets::button(
+                    ui,
+                    ButtonKind::Secondary,
+                    Some(icons::FOLDER_PLUS),
+                    "Add folder",
+                )
+                .clicked()
+                {
+                    app.actions.push(Action::AddFolder);
+                }
+            },
+        );
+        ui.add_space(18.0);
+        ui.label(
+            RichText::new(format!(
+                "{} Tip: add a watched folder in Settings and new movies show up automatically.",
+                icons::SPARKLE
+            ))
+            .size(12.5)
+            .color(p.text_weak),
+        );
+    });
+}
+
+fn no_results(ui: &mut egui::Ui) {
+    let p = palette(ui.ctx());
+    ui.vertical_centered(|ui| {
+        ui.add_space((ui.available_height() / 2.0 - 80.0).max(30.0));
+        ui.label(
+            RichText::new(icons::MAGNIFYING_GLASS)
+                .size(44.0)
+                .color(p.text_weak),
+        );
+        ui.label(theme::semibold("No movies here").size(18.0).color(p.text));
+        ui.label(RichText::new("Try another search, shelf or tag.").color(p.text_weak));
     });
 }
 
@@ -169,139 +513,278 @@ fn grid(app: &mut DropReelApp, ui: &mut egui::Ui) {
         actions,
         settings,
         selected,
+        encode_badges,
         ..
     } = app;
     let threshold = settings.threshold_bytes();
-    let cols = ((ui.available_width() + GAP) / (CARD_W + GAP))
-        .floor()
-        .max(1.0) as usize;
+    let avail = ui.available_width() - 16.0;
+    let cols = ((avail + GAP) / (MIN_CARD_W + GAP)).floor().max(1.0) as usize;
+    let card_w = ((avail - GAP * (cols as f32 - 1.0)) / cols as f32).min(230.0);
+    let card_h = card_w * 1.5 + TEXT_H;
     let rows = visible.len().div_ceil(cols);
-    ui.spacing_mut().item_spacing = vec2(GAP, GAP);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show_rows(ui, POSTER_H + TEXT_H, rows, |ui, range| {
+        .show_rows(ui, card_h + GAP, rows, |ui, range| {
+            ui.spacing_mut().item_spacing = vec2(GAP, 0.0);
             for row in range {
+                ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     for &idx in visible.iter().skip(row * cols).take(cols) {
-                        card(ui, lib, &lib.movies[idx], threshold, *selected, actions);
+                        let movie = &lib.movies[idx];
+                        card(
+                            ui,
+                            lib,
+                            movie,
+                            card_w,
+                            threshold,
+                            *selected,
+                            encode_badges.get(&movie.id),
+                            actions,
+                        );
                     }
                 });
+                ui.add_space(GAP - 6.0);
             }
         });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn card(
     ui: &mut egui::Ui,
     lib: &Library,
     movie: &Movie,
+    width: f32,
     threshold: u64,
-    selected: Option<i64>,
+    selected: Option<MovieId>,
+    encode: Option<&EncodeBadge>,
     actions: &mut Vec<Action>,
 ) {
-    let (rect, resp) = ui.allocate_exact_size(vec2(CARD_W, POSTER_H + TEXT_H), Sense::click());
+    let p = palette(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, width * 1.5 + TEXT_H), Sense::click());
     if !ui.is_rect_visible(rect) {
         return;
     }
     let id = movie.id;
     let missing = lib.missing.contains(&id);
-    let poster_rect = Rect::from_min_size(rect.min, vec2(CARD_W, POSTER_H));
-    widgets::paint_poster(
-        ui,
-        poster_rect,
-        movie.poster.as_deref(),
-        &movie.title,
-        missing,
-    );
-
+    let poster_base = Rect::from_min_size(rect.min, vec2(width, width * 1.5));
     let info_rect = Rect::from_center_size(
-        poster_rect.right_top() + vec2(-18.0, 18.0),
-        Vec2::splat(26.0),
+        poster_base.right_top() + vec2(-20.0, 20.0),
+        Vec2::splat(30.0),
     );
     let info = ui
         .interact(info_rect, resp.id.with("info"), Sense::click())
         .on_hover_text("Details");
     let hovered = resp.hovered() || info.hovered();
-
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("hover"), hovered, 0.16);
+    let poster = poster_base.translate(vec2(0.0, -4.0 * t));
     let painter = ui.painter();
-    if hovered || selected == Some(id) {
+
+    if t > 0.0 {
+        let shadow = egui::Shadow {
+            offset: [0, 12],
+            blur: 28,
+            spread: 0,
+            color: Color32::from_black_alpha((110.0 * t) as u8),
+        };
+        painter.add(shadow.as_shape(poster, 12));
+    }
+    widgets::paint_poster(
+        ui,
+        poster,
+        movie.poster.as_deref(),
+        &movie.title,
+        missing,
+        12,
+    );
+    let painter = ui.painter();
+
+    if t > 0.01 && encode.is_none() {
+        let lower = Rect::from_min_max(
+            pos2(poster.left(), poster.center().y),
+            pos2(poster.right(), poster.bottom() - 12.0),
+        );
+        widgets::vertical_gradient(
+            painter,
+            lower,
+            Color32::TRANSPARENT,
+            Color32::from_black_alpha((170.0 * t) as u8),
+        );
+        painter.rect_filled(
+            Rect::from_min_max(
+                pos2(poster.left(), poster.bottom() - 12.0),
+                poster.right_bottom(),
+            ),
+            egui::CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: 12,
+                se: 12,
+            },
+            Color32::from_black_alpha((170.0 * t) as u8),
+        );
+        if !missing {
+            let r = 22.0 + 4.0 * t;
+            painter.circle_filled(poster.center(), r, p.accent.gamma_multiply(t));
+            painter.text(
+                poster.center() + vec2(2.0, 0.0),
+                Align2::CENTER_CENTER,
+                icons::PLAY,
+                theme::icon_fill_font(r),
+                Color32::WHITE.gamma_multiply(t),
+            );
+        }
+        let info_center = info_rect.center() + vec2(0.0, -4.0 * t);
+        painter.circle_filled(
+            info_center,
+            15.0,
+            Color32::from_black_alpha((170.0 * t) as u8),
+        );
+        painter.text(
+            info_center,
+            Align2::CENTER_CENTER,
+            icons::INFO,
+            theme::icon_font(18.0),
+            Color32::WHITE.gamma_multiply(t),
+        );
+    }
+    if selected == Some(id) || t > 0.01 {
+        let color = if selected == Some(id) {
+            p.accent
+        } else {
+            p.accent.gamma_multiply(t)
+        };
         painter.rect_stroke(
-            poster_rect,
-            6.0,
-            Stroke::new(2.0, ACCENT),
+            poster,
+            12,
+            Stroke::new(2.0, color),
             egui::StrokeKind::Outside,
         );
     }
-    let mut badge_pos = poster_rect.min + vec2(6.0, 6.0);
+
+    // Badges
+    let mut y = poster.top() + 8.0;
     if missing {
-        let r = widgets::badge(painter, badge_pos, "Missing", DANGER);
-        badge_pos.y = r.max.y + 4.0;
+        let r = widgets::pill(
+            painter,
+            pos2(poster.left() + 8.0, y),
+            Align2::LEFT_TOP,
+            Some(icons::WARNING),
+            "Missing",
+            p.danger,
+            Color32::WHITE,
+        );
+        y = r.bottom() + 4.0;
     }
-    if movie.size > threshold {
-        widgets::badge(painter, badge_pos, &format_bytes(movie.size), WARN);
+    if movie.size > threshold && encode.is_none() {
+        widgets::pill(
+            painter,
+            pos2(poster.left() + 8.0, y),
+            Align2::LEFT_TOP,
+            Some(icons::LIGHTNING),
+            &format_bytes(movie.size),
+            p.warn,
+            Color32::from_rgb(35, 22, 0),
+        );
     }
     if movie.watched {
-        widgets::badge(
+        widgets::pill(
             painter,
-            poster_rect.right_bottom() - vec2(30.0, 26.0),
-            "✔",
-            Color32::from_rgb(60, 150, 90),
+            poster.right_bottom() - vec2(8.0, 10.0),
+            Align2::RIGHT_BOTTOM,
+            Some(icons::CHECK),
+            "",
+            p.success,
+            Color32::WHITE,
         );
     }
     if let (Some(pos), Some(dur)) = (movie.resume_pos, movie.duration)
         && pos > 0.0
         && dur > 0.0
+        && !movie.watched
     {
         let bar = Rect::from_min_max(
-            poster_rect.left_bottom() - vec2(0.0, 4.0),
-            poster_rect.right_bottom(),
+            poster.left_bottom() + vec2(10.0, -10.0),
+            poster.right_bottom() + vec2(-10.0, -6.0),
         );
-        painter.rect_filled(bar, 0.0, Color32::from_black_alpha(160));
-        let done = Rect::from_min_size(
-            bar.min,
-            vec2(
-                bar.width() * (pos / dur).clamp(0.0, 1.0) as f32,
-                bar.height(),
-            ),
-        );
-        painter.rect_filled(done, 0.0, Color32::from_rgb(220, 60, 50));
+        painter.rect_filled(bar, 2, Color32::from_white_alpha(70));
+        let mut done = bar;
+        done.set_width(bar.width() * (pos / dur).clamp(0.0, 1.0) as f32);
+        painter.rect_filled(done, 2, p.accent2);
     }
-    if hovered {
-        painter.circle_filled(info_rect.center(), 13.0, Color32::from_black_alpha(190));
+
+    // Encode overlay
+    if let Some(badge) = encode {
+        painter.rect_filled(poster, 12, Color32::from_black_alpha(175));
+        let (fraction, label) = match badge {
+            EncodeBadge::Running(s) => (s.fraction, format!("{:.0}%", s.fraction * 100.0)),
+            EncodeBadge::Queued(n) => (0.0, format!("#{}", n + 1)),
+        };
+        let center = poster.center() - vec2(0.0, 8.0);
+        widgets::progress_ring(
+            painter,
+            center,
+            30.0,
+            fraction,
+            p.accent,
+            Color32::from_white_alpha(40),
+            5.0,
+        );
         painter.text(
-            info_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "ℹ",
-            egui::FontId::proportional(15.0),
+            center,
+            Align2::CENTER_CENTER,
+            label,
+            theme::font(16.0, "bold"),
             Color32::WHITE,
+        );
+        let caption = if matches!(badge, EncodeBadge::Running(_)) {
+            "Re-encoding"
+        } else {
+            "Queued"
+        };
+        painter.text(
+            center + vec2(0.0, 46.0),
+            Align2::CENTER_CENTER,
+            caption,
+            theme::font(12.5, "semibold"),
+            Color32::from_white_alpha(220),
         );
     }
 
-    let text_top = poster_rect.left_bottom() + vec2(2.0, 6.0);
-    let title = painter.layout(
+    // Caption
+    let text_top = poster_base.left_bottom() + vec2(2.0, 10.0);
+    let mut job = egui::text::LayoutJob::simple_singleline(
         movie.title.clone(),
-        egui::FontId::proportional(14.0),
-        ui.visuals().strong_text_color(),
-        CARD_W - 4.0,
+        theme::font(14.0, "semibold"),
+        p.text,
     );
-    let title = truncate_to_one_line(ui, title, &movie.title, CARD_W - 4.0);
-    let title_h = title.size().y;
-    painter.galley(text_top, title, Color32::WHITE);
-    let sub = match movie.year {
-        Some(y) => format!("{y} · {}", format_bytes(movie.size)),
-        None => format_bytes(movie.size),
-    };
-    painter.text(
-        text_top + vec2(0.0, title_h + 2.0),
-        egui::Align2::LEFT_TOP,
-        sub,
-        egui::FontId::proportional(12.0),
-        ui.visuals().weak_text_color(),
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width - 4.0);
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let title_h = galley.size().y;
+    ui.painter().galley(text_top, galley, p.text);
+    let mut sub = Vec::new();
+    if let Some(y) = movie.year {
+        sub.push(y.to_string());
+    }
+    if let Some(d) = movie.duration {
+        sub.push(widgets::short_duration(d));
+    }
+    if sub.is_empty() {
+        sub.push(format_bytes(movie.size));
+    }
+    ui.painter().text(
+        text_top + vec2(0.0, title_h + 3.0),
+        Align2::LEFT_TOP,
+        sub.join(" · "),
+        theme::font(12.5, "regular"),
+        p.text_weak,
     );
 
     if info.clicked() {
         actions.push(Action::ShowDetails(id));
     } else if resp.clicked() {
-        actions.push(if missing {
+        actions.push(if missing || encode.is_some() {
             Action::ShowDetails(id)
         } else {
             Action::Play(id)
@@ -310,64 +793,61 @@ fn card(
     if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    resp.on_hover_text(&movie.title)
-        .context_menu(|ui| movie_menu(ui, movie, missing, actions));
+    resp.context_menu(|ui| movie_menu(ui, movie, missing, movie.size > threshold, actions));
 }
 
-fn truncate_to_one_line(
-    ui: &egui::Ui,
-    galley: std::sync::Arc<egui::Galley>,
-    text: &str,
-    width: f32,
-) -> std::sync::Arc<egui::Galley> {
-    if galley.rows.len() <= 1 {
-        return galley;
-    }
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        text.to_string(),
-        egui::FontId::proportional(14.0),
-        ui.visuals().strong_text_color(),
-    );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
-    ui.fonts_mut(|f| f.layout_job(job))
+fn menu_item(ui: &mut egui::Ui, icon: &str, label: &str) -> bool {
+    ui.add(
+        egui::Button::new(format!("{icon}   {label}"))
+            .frame_when_inactive(false)
+            .min_size(vec2(200.0, 28.0)),
+    )
+    .clicked()
 }
 
-/// Right-click menu shared by the grid and the list.
-pub fn movie_menu(ui: &mut egui::Ui, movie: &Movie, missing: bool, actions: &mut Vec<Action>) {
+/// Right-click menu shared by the grid, the list and the detail panel.
+pub fn movie_menu(
+    ui: &mut egui::Ui,
+    movie: &Movie,
+    missing: bool,
+    large: bool,
+    actions: &mut Vec<Action>,
+) {
     let id = movie.id;
-    if ui
-        .add_enabled(!missing, egui::Button::new("▶ Play"))
-        .clicked()
-    {
+    if !missing && menu_item(ui, icons::PLAY, "Play") {
         actions.push(Action::Play(id));
     }
-    if ui.button("ℹ Details").clicked() {
+    if menu_item(ui, icons::INFO, "Details") {
         actions.push(Action::ShowDetails(id));
     }
-    if ui.button("📂 Show in folder").clicked() {
+    if menu_item(ui, icons::FOLDER_OPEN, "Show in folder") {
         actions.push(Action::OpenFolder(id));
     }
-    if missing && ui.button("🔍 Locate…").clicked() {
+    if missing && menu_item(ui, icons::CROSSHAIR, "Locate…") {
         actions.push(Action::Locate(id));
     }
-    if ui.button("✏ Edit title…").clicked() {
+    if large && !missing && menu_item(ui, icons::LIGHTNING, "Re-encode to HEVC…") {
+        actions.push(Action::AskReencode(id));
+    }
+    if menu_item(ui, icons::PENCIL, "Edit title…") {
         actions.push(Action::EditTitle(id));
     }
-    let label = if movie.watched {
-        "Mark as unwatched"
+    let (icon, label) = if movie.watched {
+        (icons::EYE, "Mark as unwatched")
     } else {
-        "✔ Mark as watched"
+        (icons::CHECK_CIRCLE, "Mark as watched")
     };
-    if ui.button(label).clicked() {
+    if menu_item(ui, icon, label) {
         actions.push(Action::SetWatched(id, !movie.watched));
     }
     ui.separator();
-    if ui.button("🗑 Remove from library…").clicked() {
+    if menu_item(ui, icons::TRASH, "Remove from library…") {
         actions.push(Action::AskRemove(id));
     }
 }
 
 fn list(app: &mut DropReelApp, ui: &mut egui::Ui) {
+    let p = palette(ui.ctx());
     let DropReelApp {
         lib,
         visible,
@@ -375,26 +855,36 @@ fn list(app: &mut DropReelApp, ui: &mut egui::Ui) {
         filter,
         filter_dirty,
         settings,
+        encode_badges,
         ..
     } = app;
     let threshold = settings.threshold_bytes();
     let mut header_cell =
         |row: &mut egui_extras::TableRow<'_, '_>, label: &str, key: Option<SortKey>| {
             row.col(|ui| {
+                let text = RichText::new(label.to_uppercase())
+                    .size(11.0)
+                    .color(p.text_weak)
+                    .extra_letter_spacing(0.6);
                 let Some(key) = key else {
-                    ui.strong(label);
+                    ui.label(text);
                     return;
                 };
                 let arrow = if filter.sort == key {
-                    if filter.descending { " ⬇" } else { " ⬆" }
+                    if filter.descending { " ↓" } else { " ↑" }
                 } else {
                     ""
                 };
+                let label = RichText::new(format!("{}{arrow}", label.to_uppercase()))
+                    .size(11.0)
+                    .color(if filter.sort == key {
+                        p.text
+                    } else {
+                        p.text_weak
+                    });
                 if ui
-                    .add(
-                        egui::Button::new(RichText::new(format!("{label}{arrow}")).strong())
-                            .frame(false),
-                    )
+                    .add(egui::Label::new(label).sense(Sense::click()))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
                     if filter.sort == key {
@@ -407,125 +897,192 @@ fn list(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 }
             });
         };
+    ui.add_space(4.0);
     TableBuilder::new(ui)
         .striped(true)
         .sense(Sense::click())
-        .resizable(true)
         .cell_layout(UiLayout::left_to_right(Align::Center))
+        .column(Column::exact(44.0))
         .column(Column::remainder().at_least(220.0).clip(true))
-        .column(Column::exact(56.0))
-        .column(Column::exact(84.0))
-        .column(Column::exact(70.0))
-        .column(Column::initial(120.0).clip(true))
-        .column(Column::exact(92.0))
-        .column(Column::exact(92.0))
-        .column(Column::initial(150.0).clip(true))
-        .header(26.0, |mut row| {
+        .column(Column::exact(64.0))
+        .column(Column::exact(80.0))
+        .column(Column::exact(96.0))
+        .column(Column::exact(100.0))
+        .column(Column::initial(160.0).clip(true))
+        .header(28.0, |mut row| {
+            header_cell(&mut row, "", None);
             header_cell(&mut row, "Title", Some(SortKey::Title));
             header_cell(&mut row, "Year", Some(SortKey::Year));
-            header_cell(&mut row, "Size", Some(SortKey::Size));
             header_cell(&mut row, "Length", None);
-            header_cell(&mut row, "Video", None);
+            header_cell(&mut row, "Size", Some(SortKey::Size));
             header_cell(&mut row, "Added", Some(SortKey::DateAdded));
-            header_cell(&mut row, "Last played", Some(SortKey::LastPlayed));
             header_cell(&mut row, "Tags", None);
         })
         .body(|body| {
-            body.rows(24.0, visible.len(), |mut row| {
+            body.rows(52.0, visible.len(), |mut row| {
                 let movie = &lib.movies[visible[row.index()]];
                 let missing = lib.missing.contains(&movie.id);
+                let encode = encode_badges.get(&movie.id);
                 row.col(|ui| {
-                    if ui.small_button("ℹ").on_hover_text("Details").clicked() {
-                        actions.push(Action::ShowDetails(movie.id));
-                    }
-                    if missing {
-                        ui.colored_label(DANGER, "⚠").on_hover_text("File missing");
-                    }
-                    let mut text = RichText::new(&movie.title);
-                    if missing {
-                        text = text.weak();
-                    }
-                    let resp = ui
-                        .add(egui::Label::new(text).sense(Sense::click()).truncate())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                    if resp.clicked() {
-                        actions.push(if missing {
-                            Action::ShowDetails(movie.id)
-                        } else {
-                            Action::Play(movie.id)
-                        });
-                    }
-                });
-                row.col(|ui| {
-                    ui.label(movie.year.map(|y| y.to_string()).unwrap_or_default());
-                });
-                row.col(|ui| {
-                    let size = format_bytes(movie.size);
-                    if movie.size > threshold {
-                        ui.colored_label(WARN, size)
-                    } else {
-                        ui.label(size)
-                    };
-                });
-                row.col(|ui| {
-                    ui.label(movie.duration.map(format_duration).unwrap_or_default());
-                });
-                row.col(|ui| {
-                    ui.label(video_summary(movie));
-                });
-                row.col(|ui| {
-                    ui.label(format_date(movie.date_added));
-                });
-                row.col(|ui| {
-                    ui.label(
-                        movie
-                            .last_played
-                            .map(format_date)
-                            .unwrap_or_else(|| "—".into()),
+                    let (rect, _) = ui.allocate_exact_size(vec2(30.0, 45.0), Sense::hover());
+                    widgets::paint_poster(
+                        ui,
+                        rect,
+                        movie.poster.as_deref(),
+                        &movie.title,
+                        missing,
+                        5,
                     );
                 });
                 row.col(|ui| {
-                    ui.weak(lib.tag_names(movie.id).join(", "));
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        let has_status = encode.is_some()
+                            || missing
+                            || movie.watched
+                            || movie.resume_pos.is_some();
+                        ui.add_space(if has_status { 8.0 } else { 16.0 });
+                        let mut title = theme::semibold(&movie.title).color(if missing {
+                            p.text_weak
+                        } else {
+                            p.text
+                        });
+                        if missing {
+                            title = title.strikethrough();
+                        }
+                        ui.add(egui::Label::new(title).truncate());
+                        let status = match encode {
+                            Some(EncodeBadge::Running(s)) => Some((
+                                icons::LIGHTNING,
+                                format!("Re-encoding {:.0}%", s.fraction * 100.0),
+                                p.accent,
+                            )),
+                            Some(EncodeBadge::Queued(_)) => Some((
+                                icons::HOURGLASS,
+                                "Queued for re-encode".to_string(),
+                                p.text_weak,
+                            )),
+                            None if missing => {
+                                Some((icons::WARNING, "File missing".to_string(), p.danger))
+                            }
+                            None if movie.watched => {
+                                Some((icons::CHECK_CIRCLE, "Watched".to_string(), p.success))
+                            }
+                            None => movie.resume_pos.map(|r| {
+                                (
+                                    icons::CLOCK_COUNTER_CLOCKWISE,
+                                    format!("Stopped at {}", crate::util::format_duration(r)),
+                                    p.text_weak,
+                                )
+                            }),
+                        };
+                        if let Some((icon, text, color)) = status {
+                            ui.label(
+                                RichText::new(format!("{icon} {text}"))
+                                    .size(12.0)
+                                    .color(color),
+                            );
+                        }
+                    });
+                });
+                row.col(|ui| {
+                    ui.label(
+                        RichText::new(movie.year.map(|y| y.to_string()).unwrap_or_default())
+                            .color(p.text_weak),
+                    );
+                });
+                row.col(|ui| {
+                    ui.label(
+                        RichText::new(
+                            movie
+                                .duration
+                                .map(widgets::short_duration)
+                                .unwrap_or_default(),
+                        )
+                        .color(p.text_weak),
+                    );
+                });
+                row.col(|ui| {
+                    if movie.size > threshold {
+                        ui.label(
+                            RichText::new(format!(
+                                "{} {}",
+                                icons::LIGHTNING,
+                                format_bytes(movie.size)
+                            ))
+                            .color(p.warn),
+                        )
+                        .on_hover_text("Over the size limit — can be re-encoded to HEVC");
+                    } else {
+                        ui.label(RichText::new(format_bytes(movie.size)).color(p.text_weak));
+                    }
+                });
+                row.col(|ui| {
+                    ui.label(
+                        RichText::new(crate::util::format_date(movie.date_added))
+                            .color(p.text_weak),
+                    );
+                });
+                row.col(|ui| {
+                    ui.label(
+                        RichText::new(lib.tag_names(movie.id).join(", "))
+                            .size(12.5)
+                            .color(p.text_weak),
+                    );
                 });
                 let resp = row.response();
                 if resp.double_clicked() && !missing {
                     actions.push(Action::Play(movie.id));
+                } else if resp.clicked() {
+                    actions.push(Action::ShowDetails(movie.id));
                 }
-                resp.container_context_menu(|ui| movie_menu(ui, movie, missing, actions));
+                resp.container_context_menu(|ui| {
+                    movie_menu(ui, movie, missing, movie.size > threshold, actions)
+                });
             });
         });
-}
-
-/// e.g. "hevc 3840×2160"
-pub fn video_summary(movie: &Movie) -> String {
-    match (&movie.video_codec, movie.width, movie.height) {
-        (Some(c), Some(w), Some(h)) => format!("{c} {w}×{h}"),
-        (Some(c), _, _) => c.clone(),
-        _ => "—".into(),
-    }
 }
 
 pub fn drop_overlay(ctx: &egui::Context) {
     if ctx.input(|i| i.raw.hovered_files.is_empty()) {
         return;
     }
+    let p = palette(ctx);
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         Id::unique("drop_overlay"),
     ));
     let rect = ctx.content_rect();
-    painter.rect_filled(rect, 0.0, Color32::from_black_alpha(190));
+    painter.rect_filled(rect, 0.0, Color32::from_black_alpha(200));
+    let inner = rect.shrink(28.0);
+    painter.rect_filled(inner, 24, p.accent.gamma_multiply(0.12));
     painter.rect_stroke(
-        rect.shrink(24.0),
-        16.0,
-        Stroke::new(3.0, ACCENT),
+        inner,
+        24,
+        Stroke::new(3.0, p.accent),
         egui::StrokeKind::Inside,
     );
+    let c = rect.center();
+    painter.circle_filled(c - vec2(0.0, 60.0), 52.0, p.accent);
     painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        "Drop to add to your library",
-        egui::FontId::proportional(30.0),
+        c - vec2(0.0, 60.0),
+        Align2::CENTER_CENTER,
+        icons::FILM_REEL,
+        theme::icon_fill_font(52.0),
         Color32::WHITE,
+    );
+    painter.text(
+        c + vec2(0.0, 22.0),
+        Align2::CENTER_CENTER,
+        "Drop to add to your library",
+        theme::font(30.0, "bold"),
+        Color32::WHITE,
+    );
+    painter.text(
+        c + vec2(0.0, 58.0),
+        Align2::CENTER_CENTER,
+        "Files and whole folders are both fine",
+        theme::font(15.0, "regular"),
+        Color32::from_white_alpha(180),
     );
 }

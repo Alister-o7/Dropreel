@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, Key, Modifiers, Rect, RichText, Sense, Vec2, pos2, vec2};
 
+use super::icons;
+use super::theme;
 use super::{Action, DropReelApp};
 use crate::library::MovieId;
 use crate::player::{Player, PlayerEvent, Track, TrackKind};
@@ -14,7 +16,7 @@ const SAVE_INTERVAL: Duration = Duration::from_secs(10);
 /// Controls hide after this long without mouse movement (fullscreen only).
 const HIDE_CONTROLS_AFTER: Duration = Duration::from_millis(2500);
 /// Height of the control bar. In a window the video sits above it; in fullscreen it overlays.
-const BAR_HEIGHT: f32 = 88.0;
+const BAR_HEIGHT: f32 = 104.0;
 /// Fraction of the movie after which it counts as watched.
 pub const WATCHED_FRACTION: f64 = 0.95;
 
@@ -275,10 +277,10 @@ fn controls(
     if show_title {
         painter.rect_filled(top, 0.0, Color32::from_black_alpha(150));
         painter.text(
-            top.left_center() + vec2(16.0, 0.0),
+            top.left_center() + vec2(20.0, 0.0),
             egui::Align2::LEFT_CENTER,
             &np.title,
-            egui::FontId::proportional(18.0),
+            theme::font(18.0, "semibold"),
             Color32::WHITE,
         );
     }
@@ -343,68 +345,52 @@ fn controls(
 
             // Buttons
             ui.horizontal(|ui| {
-                if ui
-                    .button("⏴ Library")
-                    .on_hover_text("Back to the library (Esc)")
-                    .clicked()
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if player_button(ui, icons::ARROW_LEFT, 22.0, "Back to the library (Esc)").clicked()
                 {
                     actions.push(Action::StopPlayback { finished: false });
                 }
-                ui.add_space(8.0);
-                let play_label = RichText::new(if paused { "▶" } else { "⏸" }).size(18.0);
-                if ui
-                    .button(play_label)
-                    .on_hover_text("Play/pause (Space)")
-                    .clicked()
-                {
-                    player.set_paused(!paused);
-                }
-                if ui
-                    .button("⏪ 10s")
-                    .on_hover_text("Back 10 seconds (←)")
-                    .clicked()
-                {
+                ui.add_space(10.0);
+                if player_button(ui, icons::REWIND, 22.0, "Back 10 seconds (←)").clicked() {
                     player.seek_relative(-10.0);
                 }
-                if ui
-                    .button("10s ⏩")
-                    .on_hover_text("Forward 10 seconds (→)")
-                    .clicked()
+                if play_button(ui, paused).clicked() {
+                    player.set_paused(!paused);
+                }
+                if player_button(ui, icons::FAST_FORWARD, 22.0, "Forward 10 seconds (→)").clicked()
                 {
                     player.seek_relative(10.0);
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let fs_label = if fullscreen {
-                        "Exit fullscreen"
+                    let (fs_icon, fs_tip) = if fullscreen {
+                        (icons::CORNERS_IN, "Exit fullscreen (F)")
                     } else {
-                        "⛶ Fullscreen"
+                        (icons::CORNERS_OUT, "Fullscreen (F)")
                     };
-                    if ui
-                        .button(fs_label)
-                        .on_hover_text("Fullscreen (F, double-click)")
-                        .clicked()
-                    {
+                    if player_button(ui, fs_icon, 22.0, fs_tip).clicked() {
                         toggle_fullscreen(ui.ctx());
                     }
+                    ui.add_space(4.0);
                     track_menu(ui, player, np, TrackKind::Subtitle);
                     track_menu(ui, player, np, TrackKind::Audio);
-
+                    ui.add_space(8.0);
                     let mut volume = player.volume();
-                    ui.spacing_mut().slider_width = 100.0;
+                    ui.spacing_mut().slider_width = 96.0;
                     if ui
                         .add(egui::Slider::new(&mut volume, 0.0..=130.0).show_value(false))
+                        .on_hover_text(format!("Volume {volume:.0}%"))
                         .changed()
                     {
                         player.set_volume(volume);
                     }
                     let muted = player.muted();
                     let icon = if muted || volume < 1.0 {
-                        "🔇"
+                        icons::SPEAKER_SLASH
                     } else {
-                        "🔊"
+                        icons::SPEAKER_HIGH
                     };
-                    if ui.button(icon).on_hover_text("Mute (M)").clicked() {
+                    if player_button(ui, icon, 21.0, "Mute (M)").clicked() {
                         player.set_muted(!muted);
                     }
                 });
@@ -413,11 +399,61 @@ fn controls(
     );
 }
 
+/// A round, white icon button for the dark player bar.
+fn player_button(ui: &mut egui::Ui, icon: &str, size: f32, tooltip: &str) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::click());
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+    ui.painter().circle_filled(
+        rect.center(),
+        19.0,
+        Color32::from_white_alpha((28.0 * t) as u8),
+    );
+    let color = Color32::from_white_alpha((200.0 + 55.0 * t) as u8);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icon,
+        theme::icon_font(size),
+        color,
+    );
+    resp.on_hover_text(tooltip)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn play_button(ui: &mut egui::Ui, paused: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(46.0), Sense::click());
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+    let accent = theme::palette(ui.ctx()).accent;
+    ui.painter().circle_filled(
+        rect.center(),
+        23.0,
+        accent.lerp_to_gamma(Color32::WHITE, 0.15 * t),
+    );
+    let (icon, nudge) = if paused {
+        (icons::PLAY, 2.0)
+    } else {
+        (icons::PAUSE, 0.0)
+    };
+    ui.painter().text(
+        rect.center() + vec2(nudge, 0.0),
+        egui::Align2::CENTER_CENTER,
+        icon,
+        theme::icon_fill_font(22.0),
+        Color32::WHITE,
+    );
+    resp.on_hover_text("Play/pause (Space)")
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 fn track_menu(ui: &mut egui::Ui, player: &mut Player, np: &mut NowPlaying, kind: TrackKind) {
     let tracks: Vec<&Track> = np.tracks.iter().filter(|t| t.kind == kind).collect();
-    let (name, allow_off) = match kind {
-        TrackKind::Audio => ("Audio", false),
-        _ => ("Subtitles", true),
+    let (name, icon, allow_off) = match kind {
+        TrackKind::Audio => ("Audio", icons::MUSIC_NOTES, false),
+        _ => ("Subtitles", icons::SUBTITLES, true),
     };
     if tracks.is_empty() && kind == TrackKind::Audio {
         return;
@@ -428,8 +464,8 @@ fn track_menu(ui: &mut egui::Ui, player: &mut Player, np: &mut NowPlaying, kind:
         .map_or("Off".to_string(), |t| t.label());
     let mut choice: Option<Option<i64>> = None;
     egui::ComboBox::from_id_salt(name)
-        .selected_text(format!("{name}: {selected}"))
-        .width(200.0)
+        .selected_text(format!("{icon}  {selected}"))
+        .width(190.0)
         .show_ui(ui, |ui| {
             if allow_off
                 && ui

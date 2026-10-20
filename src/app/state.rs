@@ -48,6 +48,43 @@ impl SortKey {
     }
 }
 
+/// The sidebar's built-in collections.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Shelf {
+    #[default]
+    All,
+    ContinueWatching,
+    Unwatched,
+    Watched,
+    /// Over the re-encode threshold.
+    Large,
+    Missing,
+}
+
+impl Shelf {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All movies",
+            Self::ContinueWatching => "Continue watching",
+            Self::Unwatched => "Unwatched",
+            Self::Watched => "Watched",
+            Self::Large => "Large files",
+            Self::Missing => "Missing files",
+        }
+    }
+
+    pub fn contains(self, movie: &Movie, missing: bool, threshold: u64) -> bool {
+        match self {
+            Self::All => true,
+            Self::ContinueWatching => movie.resume_pos.is_some() && !movie.watched,
+            Self::Unwatched => !movie.watched,
+            Self::Watched => movie.watched,
+            Self::Large => movie.size > threshold,
+            Self::Missing => missing,
+        }
+    }
+}
+
 /// UI preferences remembered between runs.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -102,12 +139,29 @@ impl Library {
     pub fn total_size(&self) -> u64 {
         self.movies.iter().map(|m| m.size).sum()
     }
+
+    pub fn shelf_count(&self, shelf: Shelf, threshold: u64) -> usize {
+        self.movies
+            .iter()
+            .filter(|m| shelf.contains(m, self.missing.contains(&m.id), threshold))
+            .count()
+    }
+
+    pub fn tag_count(&self, tag: TagId) -> usize {
+        self.movie_tags
+            .values()
+            .filter(|t| t.contains(&tag))
+            .count()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Filter {
     pub search: String,
+    pub shelf: Shelf,
     pub tag: Option<TagId>,
+    /// Re-encode threshold, for the "Large files" shelf.
+    pub threshold: u64,
     pub sort: SortKey,
     pub descending: bool,
 }
@@ -136,6 +190,11 @@ pub fn visible_movies(lib: &Library, filter: &Filter) -> Vec<usize> {
                 || m.year.is_some_and(|y| y.to_string() == needle)
         })
         .filter(|(_, m)| filter.tag.is_none_or(|t| lib.has_tag(m.id, t)))
+        .filter(|(_, m)| {
+            filter
+                .shelf
+                .contains(m, lib.missing.contains(&m.id), filter.threshold)
+        })
         .map(|(i, _)| i)
         .collect();
 

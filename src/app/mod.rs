@@ -3,20 +3,27 @@
 mod detail;
 mod dialogs;
 pub mod events;
+mod icons;
 mod jobs;
 mod library_view;
 mod player_view;
 pub mod state;
+mod theme;
 mod toasts;
 mod widgets;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
 use eframe::egui;
 
+use crate::encode::{
+    EncodeConfig, EncodeEvent, EncodeJob, EncodeOutcome, EncodePreview, EncodeQueue, EncodeStatus,
+    EncoderDetector,
+};
 use crate::library::import::{self, ImportProgress, ImportReport, LibraryEnv};
 use crate::library::watch::{FolderWatcher, SETTLE_TIME};
 use crate::library::{Db, MovieId, TagId, scan};
@@ -62,6 +69,34 @@ pub enum Action {
     OpenSettings,
     SaveSettings(Box<Settings>),
     RescanWatched,
+    /// Open the re-encode preview for a movie.
+    AskReencode(MovieId),
+    StartEncode(Box<EncodePreview>),
+    CancelEncode(MovieId),
+    /// What to do with the original after a successful encode.
+    ResolveOriginal(OriginalChoice),
+    /// Quit even though an encode is running.
+    Quit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OriginalChoice {
+    Keep,
+    Trash,
+    Delete,
+}
+
+/// The re-encode preview dialog.
+pub enum PreviewDialog {
+    Loading { movie_id: MovieId, title: String },
+    Ready(Box<EncodePreview>),
+}
+
+/// A movie's place in the encode queue, for drawing overlays.
+#[derive(Clone, Debug)]
+pub enum EncodeBadge {
+    Queued(usize),
+    Running(EncodeStatus),
 }
 
 pub struct DropReelApp {
@@ -94,6 +129,17 @@ pub struct DropReelApp {
     /// "Resume from …?" question: (movie, position).
     resume_prompt: Option<(MovieId, f64)>,
 
+    encode_queue: EncodeQueue,
+    detector: Arc<EncoderDetector>,
+    encode_preview: Option<PreviewDialog>,
+    finished_encodes: VecDeque<EncodeOutcome>,
+    /// Refreshed every frame from the queue.
+    encode_running: Option<EncodeStatus>,
+    encode_queued: Vec<(MovieId, String)>,
+    encode_badges: HashMap<MovieId, EncodeBadge>,
+    quit_prompt: bool,
+    allow_close: bool,
+
     reload_requested: bool,
     last_reload: Instant,
     actions: Vec<Action>,
@@ -107,6 +153,7 @@ impl DropReelApp {
         open_paths: Vec<PathBuf>,
     ) -> anyhow::Result<Self> {
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        theme::install(&cc.egui_ctx);
         let (settings, settings_warning) = Settings::load(&paths.settings);
         let tools = Tools::locate(&settings);
         let db = Db::open(&paths.db)?;
@@ -130,6 +177,15 @@ impl DropReelApp {
         if let Err(e) = &player {
             tracing::warn!("built-in player unavailable: {e}");
         }
+        let detector = Arc::new(EncoderDetector::default());
+        let encode_events = events.clone();
+        let repaint_ctx = cc.egui_ctx.clone();
+        let encode_queue = EncodeQueue::new(
+            EncodeConfig::new(paths.db.clone(), tools.clone(), &settings),
+            detector.clone(),
+            move |event| encode_events.send(AppEvent::Encode(event)),
+            move || repaint_ctx.request_repaint(),
+        );
 
         let mut app = Self {
             filter: Filter {
@@ -158,6 +214,15 @@ impl DropReelApp {
             software_gl,
             now_playing: None,
             resume_prompt: None,
+            encode_queue,
+            detector,
+            encode_preview: None,
+            finished_encodes: VecDeque::new(),
+            encode_running: None,
+            encode_queued: Vec::new(),
+            encode_badges: HashMap::new(),
+            quit_prompt: false,
+            allow_close: false,
             reload_requested: false,
             last_reload: Instant::now(),
             actions: Vec::new(),
@@ -358,6 +423,16 @@ impl DropReelApp {
                     }
                 }
                 AppEvent::Toast(kind, text) => self.toasts.add(kind, text),
+                AppEvent::EncodePreview(preview) => {
+                    let current = match &self.encode_preview {
+                        Some(PreviewDialog::Loading { movie_id, .. }) => Some(*movie_id),
+                        _ => None,
+                    };
+                    if current == Some(preview.movie_id) {
+                        self.encode_preview = Some(PreviewDialog::Ready(preview));
+                    }
+                }
+                AppEvent::Encode(event) => self.on_encode_event(event),
             }
         }
     }
@@ -477,6 +552,27 @@ impl DropReelApp {
             Action::Import(paths) => self.start_import(paths, true),
             Action::OpenSettings => self.dialogs.settings = Some(Box::new(self.settings.clone())),
             Action::SaveSettings(new) => self.save_settings(*new, ctx),
+            Action::AskReencode(id) => self.ask_reencode(id),
+            Action::StartEncode(preview) => {
+                self.encode_preview = None;
+                let job = EncodeJob {
+                    movie_id: preview.movie_id,
+                    title: preview.title.clone(),
+                    source: preview.source.clone(),
+                };
+                if self.encode_queue.enqueue(job) {
+                    self.toasts.add(
+                        ToastKind::Info,
+                        format!("Re-encoding \"{}\" in the background.", preview.title),
+                    );
+                }
+            }
+            Action::CancelEncode(id) => self.encode_queue.cancel(id),
+            Action::ResolveOriginal(choice) => self.resolve_original(choice),
+            Action::Quit => {
+                self.allow_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
             Action::RescanWatched => {
                 if self.settings.watched_folders.is_empty() {
                     self.toasts
@@ -633,11 +729,17 @@ impl DropReelApp {
         self.dialogs.settings = None;
         self.apply_theme(ctx);
         self.apply_video_quality();
+        self.filter_dirty = true;
         let tools = Tools::locate(&self.settings);
         if tools != self.tools {
             self.tools = tools;
             self.warn_about_missing_tools();
         }
+        self.encode_queue.set_config(EncodeConfig::new(
+            self.paths.db.clone(),
+            self.tools.clone(),
+            &self.settings,
+        ));
         if old.watched_folders != self.settings.watched_folders {
             self.restart_watcher();
             let added: Vec<PathBuf> = self
@@ -652,6 +754,117 @@ impl DropReelApp {
             }
         }
         self.toasts.add(ToastKind::Success, "Settings saved.");
+    }
+
+    fn ask_reencode(&mut self, id: MovieId) {
+        let Some(movie) = self.lib.get(id).cloned() else {
+            return;
+        };
+        if movie.size <= self.settings.threshold_bytes() || self.lib.missing.contains(&id) {
+            return;
+        }
+        self.encode_preview = Some(PreviewDialog::Loading {
+            movie_id: id,
+            title: movie.title.clone(),
+        });
+        let config = EncodeConfig::new(self.paths.db.clone(), self.tools.clone(), &self.settings);
+        let detector = self.detector.clone();
+        let events = self.events.clone();
+        let spawned = std::thread::Builder::new()
+            .name("encode-preview".into())
+            .spawn(move || {
+                let preview = crate::encode::queue::preview(
+                    &config,
+                    &detector,
+                    id,
+                    &movie.title,
+                    &movie.path,
+                );
+                events.send(AppEvent::EncodePreview(Box::new(preview)));
+            });
+        if let Err(e) = spawned {
+            self.encode_preview = None;
+            self.toasts
+                .add(ToastKind::Error, format!("Could not start: {e}"));
+        }
+    }
+
+    fn on_encode_event(&mut self, event: EncodeEvent) {
+        self.reload_requested = true;
+        match event {
+            EncodeEvent::Finished(outcome) => {
+                self.toasts.add(
+                    ToastKind::Success,
+                    format!(
+                        "\"{}\" re-encoded to {}.",
+                        outcome.title,
+                        crate::util::format_bytes(outcome.output_size)
+                    ),
+                );
+                self.finished_encodes.push_back(outcome);
+            }
+            EncodeEvent::Failed { title, error, .. } => {
+                self.toasts.add(
+                    ToastKind::Error,
+                    format!("Re-encoding \"{title}\" failed: {error}"),
+                );
+            }
+            EncodeEvent::Cancelled { title, .. } => {
+                self.toasts.add(
+                    ToastKind::Info,
+                    format!("Cancelled re-encoding \"{title}\"."),
+                );
+            }
+        }
+    }
+
+    /// Keep, recycle or delete the original after a successful encode.
+    fn resolve_original(&mut self, choice: OriginalChoice) {
+        let Some(outcome) = self.finished_encodes.pop_front() else {
+            return;
+        };
+        let original = &outcome.original;
+        let result = match choice {
+            OriginalChoice::Keep => return,
+            OriginalChoice::Trash => trash::delete(original).map_err(|e| e.to_string()),
+            OriginalChoice::Delete => std::fs::remove_file(original).map_err(|e| e.to_string()),
+        };
+        match result {
+            Ok(()) => {
+                let verb = if choice == OriginalChoice::Trash {
+                    "Moved the original to the Recycle Bin"
+                } else {
+                    "Deleted the original"
+                };
+                self.toasts.add(
+                    ToastKind::Success,
+                    format!(
+                        "{verb} — freed {}.",
+                        crate::util::format_bytes(outcome.original_size)
+                    ),
+                );
+            }
+            Err(e) => self.toasts.add(
+                ToastKind::Error,
+                format!("Could not remove {}: {e}", original.display()),
+            ),
+        }
+    }
+
+    /// Copies the queue state for this frame's drawing.
+    fn refresh_encode_state(&mut self) {
+        let (running, queued) = self.encode_queue.snapshot();
+        self.encode_badges.clear();
+        if let Some(r) = &running {
+            self.encode_badges
+                .insert(r.movie_id, EncodeBadge::Running(r.clone()));
+        }
+        for (i, (id, _)) in queued.iter().enumerate() {
+            self.encode_badges
+                .insert(*id, EncodeBadge::Queued(i + usize::from(running.is_some())));
+        }
+        self.encode_running = running;
+        self.encode_queued = queued;
     }
 
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
@@ -674,6 +887,19 @@ impl eframe::App for DropReelApp {
         let ctx = ui.ctx().clone();
         self.process_events();
         self.maybe_reload(&ctx);
+        self.refresh_encode_state();
+        if ctx.input(|i| i.viewport().close_requested())
+            && self.encode_queue.is_busy()
+            && !self.allow_close
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.quit_prompt = true;
+        }
+        let threshold = self.settings.threshold_bytes();
+        if self.filter.threshold != threshold {
+            self.filter.threshold = threshold;
+            self.filter_dirty = true;
+        }
         if self.filter_dirty {
             self.visible = state::visible_movies(&self.lib, &self.filter);
             self.filter_dirty = false;
@@ -683,11 +909,11 @@ impl eframe::App for DropReelApp {
         if self.now_playing.is_some() {
             player_view::show(self, ui, frame);
         } else {
-            library_view::top_bar(self, ui);
-            library_view::status_bar(self, ui);
+            library_view::sidebar(self, ui);
             if self.selected.is_some() {
                 detail::panel(self, ui);
             }
+            library_view::toolbar(self, ui);
             library_view::central(self, ui);
         }
         dialogs::show(self, &ctx);
@@ -704,6 +930,7 @@ impl eframe::App for DropReelApp {
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         self.save_playback_position(false);
+        self.encode_queue.shutdown();
         if let Ok(player) = self.player.as_mut() {
             player.destroy(gl);
         }
