@@ -49,9 +49,14 @@ fn fatal(message: &str) {
 
 /// The window icon (assets/icon.png).
 fn icon() -> egui::IconData {
-    let decoded = image::load_from_memory(include_bytes!("../assets/icon.png")).map(|img| img.into_rgba8());
+    let decoded =
+        image::load_from_memory(include_bytes!("../assets/icon.png")).map(|img| img.into_rgba8());
     match decoded {
-        Ok(img) => egui::IconData { width: img.width(), height: img.height(), rgba: img.into_raw() },
+        Ok(img) => egui::IconData {
+            width: img.width(),
+            height: img.height(),
+            rgba: img.into_raw(),
+        },
         Err(_) => egui::IconData::default(),
     }
 }

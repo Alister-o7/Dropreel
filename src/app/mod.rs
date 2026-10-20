@@ -139,6 +139,8 @@ pub struct DropReelApp {
     encode_badges: HashMap<MovieId, EncodeBadge>,
     quit_prompt: bool,
     allow_close: bool,
+    /// A file opened with "Open with → DropReel": play it once it's in the library.
+    play_after_import: Option<PathBuf>,
 
     reload_requested: bool,
     last_reload: Instant,
@@ -223,6 +225,7 @@ impl DropReelApp {
             encode_badges: HashMap::new(),
             quit_prompt: false,
             allow_close: false,
+            play_after_import: None,
             reload_requested: false,
             last_reload: Instant::now(),
             actions: Vec::new(),
@@ -241,7 +244,19 @@ impl DropReelApp {
         if !app.settings.watched_folders.is_empty() {
             app.start_import(app.settings.watched_folders.clone(), false);
         }
-        if !open_paths.is_empty() {
+        if let [single] = open_paths.as_slice()
+            && scan::is_video_file(single)
+        {
+            // "Open with DropReel" on one movie: play it (importing it first if needed).
+            let path = scan::normalize(single);
+            match app.find_movie_for_file(&path) {
+                Some(id) => app.actions.push(Action::Play(id)),
+                None => {
+                    app.play_after_import = Some(path);
+                    app.start_import(open_paths, false);
+                }
+            }
+        } else if !open_paths.is_empty() {
             app.start_import(open_paths, true);
         }
         Ok(app)
@@ -369,6 +384,16 @@ impl DropReelApp {
                         self.import_progress = None;
                     }
                     self.reload_requested = true;
+                    if let Some(path) = self.play_after_import.take() {
+                        self.reload();
+                        match self.find_movie_for_file(&path) {
+                            Some(id) => self.actions.push(Action::Play(id)),
+                            None => self.toasts.add(
+                                ToastKind::Error,
+                                format!("Could not open {}", path.display()),
+                            ),
+                        }
+                    }
                     match report {
                         Ok(report) if report.is_empty() => {
                             if interactive {
@@ -754,6 +779,20 @@ impl DropReelApp {
             }
         }
         self.toasts.add(ToastKind::Success, "Settings saved.");
+    }
+
+    /// The library entry for a file: by path, or by fingerprint if it's a copy of a known movie.
+    fn find_movie_for_file(&self, path: &std::path::Path) -> Option<MovieId> {
+        if let Ok(Some(id)) = self.db.find_by_path(path) {
+            return Some(id);
+        }
+        let fp = crate::library::fingerprint::fingerprint(path).ok()?;
+        let matches = self.db.find_by_fingerprint(&fp).ok()?;
+        matches
+            .iter()
+            .find(|(_, p, _)| p.exists())
+            .or(matches.first())
+            .map(|(id, _, _)| *id)
     }
 
     fn ask_reencode(&mut self, id: MovieId) {

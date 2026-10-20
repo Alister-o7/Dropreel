@@ -1,0 +1,69 @@
+name: Windows
+
+on:
+  push:
+    branches: [main, master, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, test and package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache libmpv and ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: packaging/deps
+          key: deps-${{ hashFiles('packaging/package.ps1') }}-v1
+
+      - name: Download libmpv and ffmpeg
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./packaging/package.ps1 -Stage deps
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        shell: pwsh
+        run: |
+          # The integration tests use the downloaded ffmpeg/ffprobe for real encodes.
+          $env:PATH = "$PWD\packaging\deps;$env:PATH"
+          cargo test --locked
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build release and package
+        shell: pwsh
+        run: |
+          ./packaging/package.ps1 -Stage build
+          ./packaging/package.ps1 -Stage package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DropReel-win64
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+          if-no-files-found: error
