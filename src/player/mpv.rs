@@ -60,13 +60,96 @@ impl Track {
             parts.join(" · ")
         }
     }
+
+    /// A compact label without the track title, e.g. "eng · ac3 5.1" (for the menu button).
+    pub fn short_label(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(lang) = &self.lang {
+            parts.push(lang.clone());
+        }
+        if let Some(codec) = &self.codec {
+            let ch = match self.channels {
+                Some(1) => " mono",
+                Some(2) => " stereo",
+                Some(6) => " 5.1",
+                Some(8) => " 7.1",
+                _ => "",
+            };
+            parts.push(format!("{codec}{ch}"));
+        }
+        if parts.is_empty() {
+            format!("Track {}", self.id)
+        } else {
+            parts.join(" · ")
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlayerEvent {
     FileLoaded,
+    /// Tracks were added, removed or (de)selected; re-read them with `Player::tracks`.
+    TracksChanged,
     /// The file could not be played.
     Error(String),
+}
+
+// Reply ids for observed properties.
+const OBS_TIME_POS: u64 = 1;
+const OBS_DURATION: u64 = 2;
+const OBS_PAUSE: u64 = 3;
+const OBS_VOLUME: u64 = 4;
+const OBS_MUTE: u64 = 5;
+const OBS_EOF: u64 = 6;
+const OBS_TRACKS: u64 = 7;
+
+/// Playback state mirrored from mpv's property-change events.
+#[derive(Clone, Debug, PartialEq)]
+struct PlaybackState {
+    position: Option<f64>,
+    duration: Option<f64>,
+    paused: bool,
+    volume: f64,
+    muted: bool,
+    eof: bool,
+}
+
+impl Default for PlaybackState {
+    fn default() -> Self {
+        Self {
+            position: None,
+            duration: None,
+            paused: false,
+            volume: 100.0,
+            muted: false,
+            eof: false,
+        }
+    }
+}
+
+impl PlaybackState {
+    /// Applies one property change. Returns true if the track list changed.
+    fn apply(&mut self, id: u64, prop: &ffi::mpv_event_property) -> bool {
+        let has_value = prop.format != ffi::MPV_FORMAT_NONE && !prop.data.is_null();
+        // SAFETY: mpv sets `data` to a value of the format we observed the property with.
+        let f64_value = || {
+            has_value
+                .then(|| unsafe { *(prop.data as *const f64) })
+                .filter(|v| v.is_finite())
+        };
+        let flag_value = || has_value && unsafe { *(prop.data as *const c_int) } != 0;
+        match id {
+            OBS_TIME_POS => self.position = f64_value(),
+            OBS_DURATION => self.duration = f64_value(),
+            OBS_PAUSE => self.paused = flag_value(),
+            OBS_VOLUME => self.volume = f64_value().unwrap_or(self.volume),
+            OBS_MUTE => self.muted = flag_value(),
+            OBS_EOF => self.eof = flag_value(),
+            OBS_TRACKS => return true,
+            _ => {}
+        }
+        false
+    }
 }
 
 struct RenderTarget {
@@ -86,6 +169,7 @@ pub struct Player {
     target: Option<RenderTarget>,
     /// mpv's own values for the options in SIMPLE_SCALING, to restore high-quality scaling.
     default_scaling: Vec<(&'static str, String)>,
+    state: PlaybackState,
 }
 
 unsafe extern "C" fn get_proc_address(ctx: *mut c_void, name: *const c_char) -> *mut c_void {
@@ -121,6 +205,7 @@ impl Player {
             _wake_ctx: Box::new(ctx),
             target: None,
             default_scaling: Vec::new(),
+            state: PlaybackState::default(),
         };
         for (name, value) in [
             ("vo", "libmpv"),
@@ -180,6 +265,18 @@ impl Player {
             .map(|(name, _)| (*name, player.get_string(name).unwrap_or_default()))
             .collect();
 
+        for (id, name, format) in [
+            (OBS_TIME_POS, "time-pos", ffi::MPV_FORMAT_DOUBLE),
+            (OBS_DURATION, "duration", ffi::MPV_FORMAT_DOUBLE),
+            (OBS_PAUSE, "pause", ffi::MPV_FORMAT_FLAG),
+            (OBS_VOLUME, "volume", ffi::MPV_FORMAT_DOUBLE),
+            (OBS_MUTE, "mute", ffi::MPV_FORMAT_FLAG),
+            (OBS_EOF, "eof-reached", ffi::MPV_FORMAT_FLAG),
+            (OBS_TRACKS, "track-list", ffi::MPV_FORMAT_NONE),
+        ] {
+            player.observe(id, name, format);
+        }
+
         let wake = &*player._wake_ctx as *const egui::Context as *mut c_void;
         unsafe {
             (lib.render_context_set_update_callback)(render, Some(wake_up), wake);
@@ -226,19 +323,6 @@ impl Player {
         if rc < 0 {
             tracing::debug!("mpv set {name}={value}: {}", self.error_text(rc));
         }
-    }
-
-    fn get_f64(&self, name: &str) -> Option<f64> {
-        let mut v: f64 = 0.0;
-        let rc = unsafe {
-            (self.lib.get_property)(
-                self.handle,
-                cstr(name).as_ptr(),
-                ffi::MPV_FORMAT_DOUBLE,
-                &mut v as *mut f64 as *mut c_void,
-            )
-        };
-        (rc >= 0 && v.is_finite()).then_some(v)
     }
 
     fn get_i64(&self, name: &str) -> Option<i64> {
@@ -327,7 +411,10 @@ impl Player {
             "start",
             &start.map_or("none".to_string(), |s| format!("{s:.3}")),
         );
-        self.set_flag("pause", false);
+        self.set_paused(false);
+        self.state.position = start;
+        self.state.duration = None;
+        self.state.eof = false;
         self.command(&["loadfile", &path.to_string_lossy(), "replace"])
     }
 
@@ -335,24 +422,28 @@ impl Player {
         let _ = self.command(&["stop"]);
     }
 
+    // The getters below return values mpv pushed to us as property-change events (see
+    // `poll_events`), so the UI never waits on mpv's core lock while drawing a frame.
+
     pub fn paused(&self) -> bool {
-        self.get_flag("pause")
+        self.state.paused
     }
 
     pub fn set_paused(&mut self, paused: bool) {
+        self.state.paused = paused;
         self.set_flag("pause", paused);
     }
 
     pub fn position(&self) -> Option<f64> {
-        self.get_f64("time-pos")
+        self.state.position
     }
 
     pub fn duration(&self) -> Option<f64> {
-        self.get_f64("duration").filter(|d| *d > 0.0)
+        self.state.duration.filter(|d| *d > 0.0)
     }
 
     pub fn eof_reached(&self) -> bool {
-        self.get_flag("eof-reached")
+        self.state.eof
     }
 
     /// Seeks to `seconds`. `exact` is slower but lands precisely; keyframe seeks are used while
@@ -371,21 +462,25 @@ impl Player {
     }
 
     pub fn volume(&self) -> f64 {
-        self.get_f64("volume").unwrap_or(100.0)
+        self.state.volume
     }
 
     pub fn set_volume(&mut self, volume: f64) {
-        self.set_f64("volume", volume.clamp(0.0, 130.0));
+        let volume = volume.clamp(0.0, 130.0);
+        self.state.volume = volume;
+        self.set_f64("volume", volume);
     }
 
     pub fn muted(&self) -> bool {
-        self.get_flag("mute")
+        self.state.muted
     }
 
     pub fn set_muted(&mut self, muted: bool) {
+        self.state.muted = muted;
         self.set_flag("mute", muted);
     }
 
+    /// Reads the track list (synchronously; call only when `TracksChanged` arrives).
     pub fn tracks(&self) -> Vec<Track> {
         let count = self.get_i64("track-list/count").unwrap_or(0);
         (0..count)
@@ -421,7 +516,15 @@ impl Player {
         self.set_string(prop, &id.map_or("no".to_string(), |id| id.to_string()));
     }
 
-    /// Drains mpv's event queue.
+    fn observe(&self, id: u64, name: &str, format: c_int) {
+        let rc =
+            unsafe { (self.lib.observe_property)(self.handle, id, cstr(name).as_ptr(), format) };
+        if rc < 0 {
+            tracing::warn!("mpv observe {name}: {}", self.error_text(rc));
+        }
+    }
+
+    /// Drains mpv's event queue, updating the cached playback state. Never blocks.
     pub fn poll_events(&mut self) -> Vec<PlayerEvent> {
         let mut events = Vec::new();
         loop {
@@ -433,6 +536,12 @@ impl Player {
                     let end = unsafe { &*(ev.data as *const ffi::mpv_event_end_file) };
                     if end.reason == ffi::MPV_END_FILE_REASON_ERROR {
                         events.push(PlayerEvent::Error(self.error_text(end.error)));
+                    }
+                }
+                ffi::MPV_EVENT_PROPERTY_CHANGE if !ev.data.is_null() => {
+                    let prop = unsafe { &*(ev.data as *const ffi::mpv_event_property) };
+                    if self.state.apply(ev.reply_userdata, prop) {
+                        events.push(PlayerEvent::TracksChanged);
                     }
                 }
                 ffi::MPV_EVENT_SHUTDOWN => break,
@@ -453,6 +562,10 @@ impl Player {
         size: [i32; 2],
     ) -> Option<egui::TextureId> {
         let size = [size[0].max(1), size[1].max(1)];
+        // Called once per displayed frame: tells mpv the previous frame reached the screen, so
+        // it can time frames against the display's refresh (the UI repaints every vsync while
+        // playing).
+        unsafe { (self.lib.render_context_report_swap)(self.render) };
         let resized = self.ensure_target(gl, frame, size).ok()?;
         let target = self.target.as_ref()?;
         let flags = unsafe { (self.lib.render_context_update)(self.render) };
@@ -625,6 +738,24 @@ impl Drop for Player {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_track_label_drops_long_titles() {
+        let t = Track {
+            id: 1,
+            kind: TrackKind::Audio,
+            title: Some(
+                "GalaxyRG265 - Drive.2011.1080p.BluRay.DDP5.1.x265.10bit-GalaxyRG265".into(),
+            ),
+            lang: Some("eng".into()),
+            codec: Some("eac3".into()),
+            channels: Some(6),
+            external: false,
+            selected: true,
+        };
+        assert_eq!(t.short_label(), "eng · eac3 5.1");
+        assert!(t.label().contains("GalaxyRG265"));
+    }
 
     #[test]
     fn detects_software_renderers() {

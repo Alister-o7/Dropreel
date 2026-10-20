@@ -56,8 +56,6 @@ pub enum Shelf {
     ContinueWatching,
     Unwatched,
     Watched,
-    /// Over the re-encode threshold.
-    Large,
     Missing,
 }
 
@@ -68,18 +66,16 @@ impl Shelf {
             Self::ContinueWatching => "Continue watching",
             Self::Unwatched => "Unwatched",
             Self::Watched => "Watched",
-            Self::Large => "Large files",
             Self::Missing => "Missing files",
         }
     }
 
-    pub fn contains(self, movie: &Movie, missing: bool, threshold: u64) -> bool {
+    pub fn contains(self, movie: &Movie, missing: bool) -> bool {
         match self {
             Self::All => true,
             Self::ContinueWatching => movie.resume_pos.is_some() && !movie.watched,
             Self::Unwatched => !movie.watched,
             Self::Watched => movie.watched,
-            Self::Large => movie.size > threshold,
             Self::Missing => missing,
         }
     }
@@ -140,10 +136,10 @@ impl Library {
         self.movies.iter().map(|m| m.size).sum()
     }
 
-    pub fn shelf_count(&self, shelf: Shelf, threshold: u64) -> usize {
+    pub fn shelf_count(&self, shelf: Shelf) -> usize {
         self.movies
             .iter()
-            .filter(|m| shelf.contains(m, self.missing.contains(&m.id), threshold))
+            .filter(|m| shelf.contains(m, self.missing.contains(&m.id)))
             .count()
     }
 
@@ -160,8 +156,6 @@ pub struct Filter {
     pub search: String,
     pub shelf: Shelf,
     pub tag: Option<TagId>,
-    /// Re-encode threshold, for the "Large files" shelf.
-    pub threshold: u64,
     pub sort: SortKey,
     pub descending: bool,
 }
@@ -190,11 +184,7 @@ pub fn visible_movies(lib: &Library, filter: &Filter) -> Vec<usize> {
                 || m.year.is_some_and(|y| y.to_string() == needle)
         })
         .filter(|(_, m)| filter.tag.is_none_or(|t| lib.has_tag(m.id, t)))
-        .filter(|(_, m)| {
-            filter
-                .shelf
-                .contains(m, lib.missing.contains(&m.id), filter.threshold)
-        })
+        .filter(|(_, m)| filter.shelf.contains(m, lib.missing.contains(&m.id)))
         .map(|(i, _)| i)
         .collect();
 
@@ -316,5 +306,27 @@ mod tests {
             ),
             ["Alien"]
         );
+    }
+
+    #[test]
+    fn shelves() {
+        let mut lib = lib();
+        lib.movies[0].resume_pos = Some(100.0);
+        lib.movies[1].watched = true;
+        lib.missing.insert(3);
+        let shelf = |shelf| {
+            titles(
+                &lib,
+                &Filter {
+                    shelf,
+                    ..Filter::default()
+                },
+            )
+        };
+        assert_eq!(shelf(Shelf::ContinueWatching), ["The Matrix"]);
+        assert_eq!(shelf(Shelf::Watched), ["Alien"]);
+        assert_eq!(shelf(Shelf::Unwatched), ["Heat", "The Matrix"]);
+        assert_eq!(shelf(Shelf::Missing), ["Heat"]);
+        assert_eq!(lib.shelf_count(Shelf::All), 3);
     }
 }

@@ -101,6 +101,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 np.loaded = true;
                 np.tracks = player.tracks();
             }
+            PlayerEvent::TracksChanged => np.tracks = player.tracks(),
             PlayerEvent::Error(e) => {
                 actions.push(Action::PlaybackFailed(format!(
                     "Could not play \"{}\": {e}",
@@ -206,7 +207,14 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
         });
 
     // Keep the clock and auto-hide timer ticking even when no new video frame arrives.
-    ctx.request_repaint_after(Duration::from_millis(250));
+    if np.loaded && !paused {
+        // Draw every display refresh while playing: mpv gets a render call (and a swap report)
+        // each vsync, which keeps frame pacing even.
+        ctx.request_repaint();
+    } else {
+        // Keep the clock and auto-hide timer ticking while paused.
+        ctx.request_repaint_after(Duration::from_millis(250));
+    }
 }
 
 fn handle_keys(ctx: &egui::Context, player: &mut Player, actions: &mut Vec<Action>) {
@@ -461,11 +469,12 @@ fn track_menu(ui: &mut egui::Ui, player: &mut Player, np: &mut NowPlaying, kind:
     let selected = tracks
         .iter()
         .find(|t| t.selected)
-        .map_or("Off".to_string(), |t| t.label());
+        .map_or("Off".to_string(), |t| t.short_label());
     let mut choice: Option<Option<i64>> = None;
     egui::ComboBox::from_id_salt(name)
         .selected_text(format!("{icon}  {selected}"))
-        .width(190.0)
+        .width(160.0)
+        .truncate()
         .show_ui(ui, |ui| {
             if allow_off
                 && ui
@@ -474,8 +483,10 @@ fn track_menu(ui: &mut egui::Ui, player: &mut Player, np: &mut NowPlaying, kind:
             {
                 choice = Some(None);
             }
+            ui.set_max_width(420.0);
             for t in &tracks {
-                if ui.selectable_label(t.selected, t.label()).clicked() {
+                let item = egui::Button::selectable(t.selected, t.label()).truncate();
+                if ui.add(item).on_hover_text(t.label()).clicked() {
                     choice = Some(Some(t.id));
                 }
             }

@@ -66,28 +66,22 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
             ui.add_space(10.0);
 
             widgets::section_label(ui, "Library");
-            let threshold = app.settings.threshold_bytes();
             let shelves = [
                 (Shelf::All, icons::FILM_SLATE),
                 (Shelf::ContinueWatching, icons::CLOCK_COUNTER_CLOCKWISE),
                 (Shelf::Unwatched, icons::EYE),
                 (Shelf::Watched, icons::CHECK_CIRCLE),
-                (Shelf::Large, icons::LIGHTNING),
                 (Shelf::Missing, icons::WARNING_CIRCLE),
             ];
             for (shelf, icon) in shelves {
-                let count = app.lib.shelf_count(shelf, threshold);
+                let count = app.lib.shelf_count(shelf);
                 if matches!(shelf, Shelf::Missing | Shelf::ContinueWatching)
                     && count == 0
                     && app.filter.shelf != shelf
                 {
                     continue;
                 }
-                let label = if shelf == Shelf::Large {
-                    format!("Over {} GB", app.settings.threshold_gb)
-                } else {
-                    shelf.label().to_string()
-                };
+                let label = shelf.label();
                 let selected = app.filter.shelf == shelf && app.filter.tag.is_none();
                 if widgets::nav_item(ui, icon, &label, Some(count), selected).clicked() {
                     app.filter.shelf = shelf;
@@ -246,9 +240,6 @@ pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 .and_then(|t| app.lib.tags.iter().find(|tag| tag.id == t))
             {
                 Some(tag) => format!("{} {}", icons::TAG, tag.name),
-                None if app.filter.shelf == Shelf::Large => {
-                    format!("Over {} GB", app.settings.threshold_gb)
-                }
                 None => app.filter.shelf.label().to_string(),
             };
             ui.label(theme::bold(title).size(24.0).color(p.text));

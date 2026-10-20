@@ -37,6 +37,13 @@ pub struct mpv_event_end_file {
 }
 
 #[repr(C)]
+pub struct mpv_event_property {
+    pub name: *const c_char,
+    pub format: c_int,
+    pub data: *mut c_void,
+}
+
+#[repr(C)]
 pub struct mpv_render_param {
     pub kind: c_int,
     pub data: *mut c_void,
@@ -57,6 +64,7 @@ pub struct mpv_opengl_fbo {
     pub internal_format: c_int,
 }
 
+pub const MPV_FORMAT_NONE: c_int = 0;
 pub const MPV_FORMAT_FLAG: c_int = 3;
 pub const MPV_FORMAT_INT64: c_int = 4;
 pub const MPV_FORMAT_DOUBLE: c_int = 5;
@@ -65,6 +73,7 @@ pub const MPV_EVENT_NONE: c_int = 0;
 pub const MPV_EVENT_SHUTDOWN: c_int = 1;
 pub const MPV_EVENT_END_FILE: c_int = 7;
 pub const MPV_EVENT_FILE_LOADED: c_int = 8;
+pub const MPV_EVENT_PROPERTY_CHANGE: c_int = 22;
 
 pub const MPV_END_FILE_REASON_ERROR: c_int = 4;
 
@@ -97,6 +106,7 @@ pub struct MpvLib {
     pub get_property_string: unsafe extern "C" fn(*mut mpv_handle, *const c_char) -> *mut c_char,
     pub command: unsafe extern "C" fn(*mut mpv_handle, *mut *const c_char) -> c_int,
     pub wait_event: unsafe extern "C" fn(*mut mpv_handle, c_double) -> *mut mpv_event,
+    pub observe_property: unsafe extern "C" fn(*mut mpv_handle, u64, *const c_char, c_int) -> c_int,
     pub set_wakeup_callback: unsafe extern "C" fn(*mut mpv_handle, Option<Callback>, *mut c_void),
     pub render_context_create: unsafe extern "C" fn(
         *mut *mut mpv_render_context,
@@ -108,6 +118,7 @@ pub struct MpvLib {
     pub render_context_update: unsafe extern "C" fn(*mut mpv_render_context) -> u64,
     pub render_context_render:
         unsafe extern "C" fn(*mut mpv_render_context, *mut mpv_render_param) -> c_int,
+    pub render_context_report_swap: unsafe extern "C" fn(*mut mpv_render_context),
     pub render_context_free: unsafe extern "C" fn(*mut mpv_render_context),
 }
 
@@ -154,11 +165,13 @@ unsafe fn load(lib: libloading::Library) -> Result<MpvLib, String> {
         get_property_string: sym!("mpv_get_property_string"),
         command: sym!("mpv_command"),
         wait_event: sym!("mpv_wait_event"),
+        observe_property: sym!("mpv_observe_property"),
         set_wakeup_callback: sym!("mpv_set_wakeup_callback"),
         render_context_create: sym!("mpv_render_context_create"),
         render_context_set_update_callback: sym!("mpv_render_context_set_update_callback"),
         render_context_update: sym!("mpv_render_context_update"),
         render_context_render: sym!("mpv_render_context_render"),
+        render_context_report_swap: sym!("mpv_render_context_report_swap"),
         render_context_free: sym!("mpv_render_context_free"),
         _lib: lib,
     })

@@ -934,11 +934,6 @@ impl eframe::App for DropReelApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.quit_prompt = true;
         }
-        let threshold = self.settings.threshold_bytes();
-        if self.filter.threshold != threshold {
-            self.filter.threshold = threshold;
-            self.filter_dirty = true;
-        }
         if self.filter_dirty {
             self.visible = state::visible_movies(&self.lib, &self.filter);
             self.filter_dirty = false;
