@@ -3,6 +3,8 @@ name: Windows
 on:
   push:
     branches: [main, master, "claude/**"]
+    # Pushing a version tag (e.g. v0.1.0) also publishes a GitHub Release.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -69,3 +71,41 @@ jobs:
             dist/*.zip
             dist/*-setup.exe
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches Cargo.toml
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+          test -f "docs/release-notes/$GITHUB_REF_NAME.md" || { echo "::error::Missing docs/release-notes/$GITHUB_REF_NAME.md"; exit 1; }
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: DropReel-win64
+          path: dist
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.zip *-setup.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: DropReel ${{ github.ref_name }}
+          body_path: docs/release-notes/${{ github.ref_name }}.md
+          files: |
+            dist/*.zip
+            dist/*-setup.exe
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true

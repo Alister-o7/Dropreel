@@ -34,10 +34,15 @@ window and they join your library; click a poster and it plays right there. Movi
 
 ## Install
 
-Download the latest build from the
-[Actions page](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml) (artifact
-**DropReel-win64**): either the installer (`DropReel-<version>-setup.exe`, per-user, no admin
-needed) or the portable zip. Windows 10/11, 64-bit.
+Download the latest version from the
+[Releases page](https://github.com/Alister-o7/DropReel/releases/latest): either the installer
+(`DropReel-<version>-setup.exe`, per-user, no admin needed) or the portable zip. Windows 10/11,
+64-bit. Builds of every commit are also available as the **DropReel-win64** artifact on the
+[Actions page](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml).
+
+To publish a new release, bump `version` in `Cargo.toml`, add
+`docs/release-notes/v<version>.md`, and push a `v<version>` tag — CI builds, tests and attaches
+the installer, zip and checksums to a GitHub Release.
 
 Keep these files next to `DropReel.exe` (both packages include them):
 
