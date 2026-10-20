@@ -58,7 +58,7 @@ impl Toasts {
                         .show(ui, |ui| {
                             ui.set_width(360.0);
                             ui.horizontal_wrapped(|ui| {
-                                ui.colored_label(accent, "●");
+                                ui.colored_label(accent, "⏺");
                                 ui.label(&toast.text);
                             });
                         })

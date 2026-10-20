@@ -99,6 +99,43 @@ pub fn show(app: &mut DropReelApp, ctx: &egui::Context) {
     edit_window(app, ctx);
     tmdb_window(app, ctx);
     remove_modal(app, ctx);
+    resume_modal(app, ctx);
+}
+
+fn resume_modal(app: &mut DropReelApp, ctx: &egui::Context) {
+    let Some((id, pos)) = app.resume_prompt else {
+        return;
+    };
+    let title = app.lib.get(id).map(|m| m.title.clone()).unwrap_or_default();
+    let mut close = false;
+    let modal = egui::Modal::new(egui::Id::unique("resume_prompt")).show(ctx, |ui| {
+        ui.set_width(340.0);
+        ui.heading(title);
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if ui
+                .button(
+                    RichText::new(format!(
+                        "▶ Resume from {}",
+                        crate::util::format_duration(pos)
+                    ))
+                    .strong(),
+                )
+                .clicked()
+            {
+                app.actions.push(Action::StartPlayback(id, Some(pos)));
+                close = true;
+            }
+            if ui.button("Start over").clicked() {
+                app.actions.push(Action::StartPlayback(id, None));
+                close = true;
+            }
+            close |= ui.button("Cancel").clicked();
+        });
+    });
+    if close || modal.should_close() {
+        app.resume_prompt = None;
+    }
 }
 
 fn path_field(ui: &mut egui::Ui, id: &str, value: &mut Option<PathBuf>, found: Option<&PathBuf>) {
@@ -210,6 +247,17 @@ fn settings_window(app: &mut DropReelApp, ctx: &egui::Context) {
                     });
                     ui.end_row();
                 });
+
+                ui.separator();
+                ui.heading("Player");
+                ui.checkbox(&mut draft.high_quality_video, "High-quality video scaling")
+                    .on_hover_text("mpv's sharper scalers. Turn this off if videos show only a black picture.");
+                if app.software_gl {
+                    ui.weak("Your PC is using software OpenGL, so simple scaling is always used.");
+                }
+                if let Err(e) = &app.player {
+                    ui.colored_label(DANGER, format!("Built-in player unavailable: {e}"));
+                }
 
                 ui.separator();
                 ui.heading("Appearance");

@@ -5,6 +5,7 @@ mod dialogs;
 pub mod events;
 mod jobs;
 mod library_view;
+mod player_view;
 pub mod state;
 mod toasts;
 mod widgets;
@@ -21,6 +22,7 @@ use crate::library::watch::{FolderWatcher, SETTLE_TIME};
 use crate::library::{Db, MovieId, TagId, scan};
 use crate::metadata::{self, tmdb::TmdbMovie};
 use crate::paths::AppPaths;
+use crate::player::Player;
 use crate::settings::{Settings, ThemeChoice};
 use crate::tools::Tools;
 use dialogs::Dialogs;
@@ -33,6 +35,12 @@ const PREFS_KEY: &str = "dropreel-prefs";
 /// Things the UI asked for during a frame, applied after drawing.
 pub enum Action {
     Play(MovieId),
+    /// Start playback, optionally from a resume position.
+    StartPlayback(MovieId, Option<f64>),
+    StopPlayback {
+        finished: bool,
+    },
+    PlaybackFailed(String),
     ShowDetails(MovieId),
     CloseDetails,
     OpenFolder(MovieId),
@@ -78,6 +86,14 @@ pub struct DropReelApp {
     dialogs: Dialogs,
     watcher: Option<FolderWatcher>,
 
+    /// The built-in player, or why it is unavailable.
+    player: Result<Player, String>,
+    /// Software OpenGL (e.g. in a VM): always use simple video scaling.
+    software_gl: bool,
+    now_playing: Option<player_view::NowPlaying>,
+    /// "Resume from …?" question: (movie, position).
+    resume_prompt: Option<(MovieId, f64)>,
+
     reload_requested: bool,
     last_reload: Instant,
     actions: Vec<Action>,
@@ -100,6 +116,20 @@ impl DropReelApp {
             .and_then(|s| eframe::get_value(s, PREFS_KEY))
             .unwrap_or_default();
         let (events, rx) = EventSink::new(cc.egui_ctx.clone());
+        let mut software_gl = false;
+        let player = match (&cc.get_proc_address, &cc.gl) {
+            (Some(get_proc), Some(gl)) => {
+                use eframe::glow::HasContext as _;
+                let renderer = unsafe { gl.get_parameter_string(eframe::glow::RENDERER) };
+                software_gl = crate::player::is_software_renderer(&renderer);
+                tracing::info!("OpenGL renderer: {renderer}");
+                Player::new(get_proc.clone(), cc.egui_ctx.clone())
+            }
+            _ => Err("OpenGL is not available".to_string()),
+        };
+        if let Err(e) = &player {
+            tracing::warn!("built-in player unavailable: {e}");
+        }
 
         let mut app = Self {
             filter: Filter {
@@ -124,11 +154,19 @@ impl DropReelApp {
             toasts: Toasts::default(),
             dialogs: Dialogs::default(),
             watcher: None,
+            player,
+            software_gl,
+            now_playing: None,
+            resume_prompt: None,
             reload_requested: false,
             last_reload: Instant::now(),
             actions: Vec::new(),
         };
         app.apply_theme(&cc.egui_ctx);
+        app.apply_video_quality();
+        // eframe restores the last window state; never start in fullscreen on the library.
+        cc.egui_ctx
+            .send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         if let Some(w) = settings_warning {
             app.toasts.add(ToastKind::Error, w);
         }
@@ -158,6 +196,13 @@ impl DropReelApp {
             ThemeChoice::Dark => egui::Theme::Dark,
             ThemeChoice::Light => egui::Theme::Light,
         });
+    }
+
+    fn apply_video_quality(&mut self) {
+        let high = self.settings.high_quality_video && !self.software_gl;
+        if let Ok(player) = self.player.as_mut() {
+            player.set_high_quality_scaling(high);
+        }
     }
 
     fn warn_about_missing_tools(&mut self) {
@@ -327,6 +372,12 @@ impl DropReelApp {
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         match action {
             Action::Play(id) => self.play(id),
+            Action::StartPlayback(id, start) => self.start_playback(id, start),
+            Action::StopPlayback { finished } => self.stop_playback(finished, ctx),
+            Action::PlaybackFailed(message) => {
+                self.toasts.add(ToastKind::Error, message);
+                self.stop_playback(false, ctx);
+            }
             Action::ShowDetails(id) => self.selected = Some(id),
             Action::CloseDetails => self.selected = None,
             Action::OpenFolder(id) => {
@@ -454,16 +505,97 @@ impl DropReelApp {
             );
             return;
         }
-        // Until the built-in player lands, hand the file to the system's default player.
-        match opener::open(&movie.path) {
+        if let Err(reason) = &self.player {
+            // Without libmpv, hand the file to the system's default player.
+            let message = format!("{reason} Opening in your default player instead.");
+            match opener::open(&movie.path) {
+                Ok(()) => {
+                    self.toasts.add(ToastKind::Info, message);
+                    let r = self.db.mark_played(id);
+                    self.db_result(r);
+                }
+                Err(e) => self
+                    .toasts
+                    .add(ToastKind::Error, format!("Could not open the movie: {e}")),
+            }
+            return;
+        }
+        match player_view::should_offer_resume(movie.resume_pos, movie.duration) {
+            Some(pos) => self.resume_prompt = Some((id, pos)),
+            None => self.start_playback(id, None),
+        }
+    }
+
+    fn start_playback(&mut self, id: MovieId, start: Option<f64>) {
+        let Some(movie) = self.lib.get(id).cloned() else {
+            return;
+        };
+        let Ok(player) = self.player.as_mut() else {
+            return;
+        };
+        tracing::info!("playing \"{}\" from {start:?}", movie.title);
+        match player.load(&movie.path, start) {
             Ok(()) => {
+                self.now_playing = Some(player_view::NowPlaying::new(
+                    id,
+                    movie.title.clone(),
+                    movie.duration,
+                ));
                 let r = self.db.mark_played(id);
                 self.db_result(r);
             }
-            Err(e) => self
-                .toasts
-                .add(ToastKind::Error, format!("Could not open the movie: {e}")),
+            Err(e) => self.toasts.add(
+                ToastKind::Error,
+                format!("Could not play \"{}\": {e}", movie.title),
+            ),
         }
+    }
+
+    /// Saves where playback stopped. Finished movies are marked watched and start over next time.
+    fn save_playback_position(&mut self, finished: bool) {
+        let (Some(np), Ok(player)) = (self.now_playing.as_ref(), self.player.as_ref()) else {
+            return;
+        };
+        let dur = player.duration().or(np.known_duration);
+        let resume = if finished {
+            None
+        } else {
+            player_view::resume_position(player.position(), dur)
+        };
+        let watched = finished
+            || resume.is_none()
+                && player
+                    .position()
+                    .zip(dur)
+                    .is_some_and(|(p, d)| p >= d * player_view::WATCHED_FRACTION);
+        let mut result = self.db.set_resume(np.movie_id, resume);
+        if watched && result.is_ok() {
+            result = self.db.set_watched(np.movie_id, true);
+        }
+        self.db_result(result);
+    }
+
+    fn stop_playback(&mut self, finished: bool, ctx: &egui::Context) {
+        if self.now_playing.is_none() {
+            return;
+        }
+        if let (Some(np), Ok(player)) = (&self.now_playing, &self.player) {
+            tracing::info!(
+                "stopped \"{}\" at {:?} (finished: {finished})",
+                np.title,
+                player.position()
+            );
+        }
+        self.save_playback_position(finished);
+        if let Ok(player) = self.player.as_mut() {
+            player.stop();
+        }
+        if finished && let Some(np) = &self.now_playing {
+            self.toasts
+                .add(ToastKind::Success, format!("Finished \"{}\".", np.title));
+        }
+        self.now_playing = None;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
     }
 
     fn locate(&mut self, id: MovieId) {
@@ -500,6 +632,7 @@ impl DropReelApp {
         let old = std::mem::replace(&mut self.settings, new);
         self.dialogs.settings = None;
         self.apply_theme(ctx);
+        self.apply_video_quality();
         let tools = Tools::locate(&self.settings);
         if tools != self.tools {
             self.tools = tools;
@@ -537,7 +670,7 @@ impl DropReelApp {
 }
 
 impl eframe::App for DropReelApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.process_events();
         self.maybe_reload(&ctx);
@@ -547,12 +680,16 @@ impl eframe::App for DropReelApp {
         }
         self.handle_dropped_files(&ctx);
 
-        library_view::top_bar(self, ui);
-        library_view::status_bar(self, ui);
-        if self.selected.is_some() {
-            detail::panel(self, ui);
+        if self.now_playing.is_some() {
+            player_view::show(self, ui, frame);
+        } else {
+            library_view::top_bar(self, ui);
+            library_view::status_bar(self, ui);
+            if self.selected.is_some() {
+                detail::panel(self, ui);
+            }
+            library_view::central(self, ui);
         }
-        library_view::central(self, ui);
         dialogs::show(self, &ctx);
         self.toasts.show(&ctx);
         library_view::drop_overlay(&ctx);
@@ -562,6 +699,13 @@ impl eframe::App for DropReelApp {
         }
         if self.imports_running > 0 {
             ctx.request_repaint_after(Duration::from_millis(250));
+        }
+    }
+
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        self.save_playback_position(false);
+        if let Ok(player) = self.player.as_mut() {
+            player.destroy(gl);
         }
     }
 

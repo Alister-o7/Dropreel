@@ -89,7 +89,7 @@ TV-series/episode handling, streaming or network shares as a server, multi-user 
   (NVENC → AMF → QSV → x265), bitrate planning, ffmpeg command lines, output verification.
 - [x] **M2 — App window & library UI.** Drag & drop, poster grid + list view, search/sort/tags,
   detail panel, missing-file "Locate…", import report, Settings window.
-- [ ] **M3 — Embedded mpv player.** In-window playback, controls, tracks, fullscreen, resume.
+- [x] **M3 — Embedded mpv player.** In-window playback, controls, tracks, fullscreen, resume.
 - [ ] **M4 — Re-encode queue & UI.** Badge/banner, plan preview + confirmation, background
   queue with progress/ETA/cancel, verification, "what to do with the original".
 - [ ] **M5 — Windows packaging.** GitHub Actions build/test, packaging script bundling
