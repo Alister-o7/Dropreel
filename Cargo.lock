@@ -752,6 +752,7 @@ dependencies = [
  "dirs",
  "dunce",
  "eframe",
+ "egui",
  "egui_extras",
  "fs4",
  "image",

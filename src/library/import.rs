@@ -57,20 +57,45 @@ impl ImportReport {
     }
 
     pub fn summary(&self) -> String {
-        let mut parts = vec![match self.added.len() {
-            1 => "Added 1 movie".to_string(),
-            n => format!("Added {n} movies"),
-        }];
+        let plural = |n: usize, one: &str, many: &str| {
+            if n == 1 {
+                format!("1 {one}")
+            } else {
+                format!("{n} {many}")
+            }
+        };
+        let mut parts = Vec::new();
+        if !self.added.is_empty() {
+            parts.push(format!(
+                "added {}",
+                plural(self.added.len(), "movie", "movies")
+            ));
+        }
         if !self.relinked.is_empty() {
-            parts.push(format!("found {} moved", self.relinked.len()));
+            parts.push(format!(
+                "found {}",
+                plural(self.relinked.len(), "moved movie", "moved movies")
+            ));
         }
         if !self.skipped.is_empty() {
-            parts.push(format!("skipped {}", self.skipped.len()));
+            parts.push(format!(
+                "skipped {}",
+                plural(self.skipped.len(), "file", "files")
+            ));
         }
         if !self.failed.is_empty() {
             parts.push(format!("{} failed", self.failed.len()));
         }
-        parts.join(", ")
+        let text = if parts.is_empty() {
+            "nothing new to add".to_string()
+        } else {
+            parts.join(", ")
+        };
+        let mut chars = text.chars();
+        chars
+            .next()
+            .map(|c| c.to_uppercase().chain(chars).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -153,10 +178,18 @@ pub fn run_import(
         .collect();
     let db = Db::open(&env.db_path)?;
     let known: HashSet<PathBuf> = db.all_paths()?.into_iter().collect();
+    let ignored: HashSet<PathBuf> = db.ignored_paths()?.into_iter().collect();
 
     let mut report = ImportReport::default();
     let mut todo = Vec::new();
     for file in files {
+        if ignored.contains(&file) {
+            // Removed by the user: only an explicit drop/add brings it back.
+            if !report_known {
+                continue;
+            }
+            db.unignore_path(&file)?;
+        }
         if known.contains(&file) {
             if report_known {
                 report.skipped.push((file, "already in the library".into()));
@@ -323,6 +356,7 @@ mod tests {
 
         let report = import(&env, std::slice::from_ref(&movies));
         assert_eq!(report.added.len(), 2, "{report:?}");
+        assert_eq!(report.summary(), "Added 2 movies, skipped 1 file");
         assert_eq!(report.skipped.len(), 1);
         assert!(report.skipped[0].1.starts_with("duplicate of"));
         assert!(!report.notes.is_empty(), "missing ffprobe is mentioned");
@@ -350,6 +384,25 @@ mod tests {
     }
 
     #[test]
+    fn removed_movies_stay_removed_from_background_scans() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = env(dir.path());
+        let folder = dir.path().join("watched");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("Heat.1995.mkv"), b"heat").unwrap();
+        import(&env, std::slice::from_ref(&folder));
+        let db = Db::open(&env.db_path).unwrap();
+        db.remove_movie(db.all_movies().unwrap()[0].id).unwrap();
+
+        let background =
+            run_import(&env, std::slice::from_ref(&folder), false, &|_| {}, &|| {}).unwrap();
+        assert!(background.is_empty(), "{background:?}");
+        let explicit = import(&env, &[folder]);
+        assert_eq!(explicit.added.len(), 1);
+        assert!(db.ignored_paths().unwrap().is_empty());
+    }
+
+    #[test]
     fn moved_files_are_relinked_by_fingerprint() {
         let dir = tempfile::tempdir().unwrap();
         let env = env(dir.path());
@@ -364,6 +417,7 @@ mod tests {
 
         let report = run_import(&env, &[moved_dir], false, &|_| {}, &|| {}).unwrap();
         assert_eq!(report.relinked.len(), 1, "{report:?}");
+        assert_eq!(report.summary(), "Found 1 moved movie");
         assert!(report.added.is_empty());
         let movies = Db::open(&env.db_path).unwrap().all_movies().unwrap();
         assert_eq!(movies.len(), 1);

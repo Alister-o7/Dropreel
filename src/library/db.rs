@@ -49,6 +49,8 @@ const MIGRATIONS: &[&str] = &[
         tag_id   INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
         PRIMARY KEY (movie_id, tag_id)
     );",
+    // v3: files the user removed, so watched-folder scans do not add them back
+    "CREATE TABLE ignored_paths (path TEXT PRIMARY KEY);",
 ];
 
 pub const SCHEMA_VERSION: usize = MIGRATIONS.len();
@@ -411,10 +413,33 @@ impl Db {
         Ok(())
     }
 
-    /// Removes a movie from the library. The file on disk is not touched.
+    /// Removes a movie from the library. The file on disk is not touched. Its path is remembered
+    /// so background scans of watched folders do not add it again.
     pub fn remove_movie(&self, id: MovieId) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO ignored_paths (path) SELECT path FROM movies WHERE id = ?1",
+            [id],
+        )?;
         self.conn
             .execute("DELETE FROM movies WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn ignored_paths(&self) -> anyhow::Result<Vec<PathBuf>> {
+        let mut stmt = self.conn.prepare("SELECT path FROM ignored_paths")?;
+        let paths = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .map(|p| p.map(PathBuf::from))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(paths)
+    }
+
+    /// Forgets that a path was removed (the user added it again explicitly).
+    pub fn unignore_path(&self, path: &Path) -> anyhow::Result<()> {
+        self.conn.execute(
+            "DELETE FROM ignored_paths WHERE path = ?1",
+            [path_to_sql(path)],
+        )?;
         Ok(())
     }
 
@@ -593,6 +618,7 @@ mod tests {
         assert!(db.movie_tags().unwrap()[&id].contains(&a));
         db.remove_movie(id).unwrap();
         assert!(db.movie_tags().unwrap().is_empty());
+        assert_eq!(db.ignored_paths().unwrap(), vec![PathBuf::from("C:/a.mkv")]);
         assert_eq!(db.all_tags().unwrap().len(), 1);
     }
 }

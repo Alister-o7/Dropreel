@@ -1,5 +1,6 @@
 //! DropReel: a movie library and player.
 
+pub mod app;
 pub mod encode;
 pub mod library;
 pub mod metadata;
