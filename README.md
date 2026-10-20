@@ -41,8 +41,9 @@ Download the latest version from the
 [Actions page](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml).
 
 To publish a new release, bump `version` in `Cargo.toml`, add
-`docs/release-notes/v<version>.md`, and push a `v<version>` tag — CI builds, tests and attaches
-the installer, zip and checksums to a GitHub Release.
+`docs/release-notes/v<version>.md`, then either push a `v<version>` tag or run the **Windows**
+workflow manually with *Publish a GitHub Release* ticked. CI builds, tests, creates the tag and
+attaches the installer, zip and checksums to a GitHub Release.
 
 Keep these files next to `DropReel.exe` (both packages include them):
 

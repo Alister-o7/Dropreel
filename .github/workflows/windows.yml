@@ -7,6 +7,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish a GitHub Release (tag v<version from Cargo.toml>) from this commit"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -75,21 +80,25 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the tag matches Cargo.toml
+      - name: Work out the release tag
+        id: version
         run: |
           version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+          tag="v$version"
+          # A pushed tag must match Cargo.toml; a manual run creates the tag itself.
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
             exit 1
           fi
-          test -f "docs/release-notes/$GITHUB_REF_NAME.md" || { echo "::error::Missing docs/release-notes/$GITHUB_REF_NAME.md"; exit 1; }
+          test -f "docs/release-notes/$tag.md" || { echo "::error::Missing docs/release-notes/$tag.md"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
         with:
@@ -102,8 +111,10 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          name: DropReel ${{ github.ref_name }}
-          body_path: docs/release-notes/${{ github.ref_name }}.md
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: DropReel ${{ steps.version.outputs.tag }}
+          body_path: docs/release-notes/${{ steps.version.outputs.tag }}.md
           files: |
             dist/*.zip
             dist/*-setup.exe
