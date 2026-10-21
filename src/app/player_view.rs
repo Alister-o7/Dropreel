@@ -336,6 +336,7 @@ fn controls(
                 let r = ui
                     .add_enabled(duration > 0.0, slider)
                     .interact(Sense::click());
+                r.widget_info(|| egui::WidgetInfo::slider(duration > 0.0, value, "Seek"));
                 // Fast keyframe seeks while the button is held, one exact seek on release. A quick
                 // click may only report its new value on the release frame.
                 if r.is_pointer_button_down_on() {
@@ -400,11 +401,9 @@ fn controls(
                     ui.add_space(8.0);
                     let mut volume = player.volume();
                     ui.spacing_mut().slider_width = 96.0;
-                    if ui
-                        .add(egui::Slider::new(&mut volume, 0.0..=130.0).show_value(false))
-                        .on_hover_text(format!("Volume {volume:.0}%"))
-                        .changed()
-                    {
+                    let r = ui.add(egui::Slider::new(&mut volume, 0.0..=130.0).show_value(false));
+                    r.widget_info(|| egui::WidgetInfo::slider(true, volume, "Volume"));
+                    if r.on_hover_text(format!("Volume {volume:.0}%")).changed() {
                         player.set_volume(volume);
                     }
                     let muted = player.muted();

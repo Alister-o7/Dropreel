@@ -253,7 +253,7 @@ fn dropping_a_folder_with_junk_reports_what_failed() {
     until(&mut app, "the report to close", |a| {
         !has(a, "Import finished")
     });
-    assert!(has(&app, "Another Film"));
+    until(&mut app, "the imported movie", |a| has(a, "Another Film"));
     assert!(!has(&app, "Not Really A Movie"));
 }
 
