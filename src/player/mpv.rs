@@ -104,6 +104,14 @@ const OBS_MUTE: u64 = 5;
 const OBS_EOF: u64 = 6;
 const OBS_TRACKS: u64 = 7;
 
+/// A seek asked for before the file finished loading. mpv refuses seeks until then, so it is
+/// kept and applied on `FILE_LOADED`.
+#[derive(Clone, Copy, Debug)]
+enum PendingSeek {
+    To { seconds: f64, exact: bool },
+    By(f64),
+}
+
 /// Playback state mirrored from mpv's property-change events.
 #[derive(Clone, Debug, PartialEq)]
 struct PlaybackState {
@@ -225,6 +233,9 @@ pub struct Player {
     /// mpv's own values for the options in SIMPLE_SCALING, to restore high-quality scaling.
     default_scaling: Vec<(&'static str, String)>,
     state: PlaybackState,
+    /// Whether the current file has loaded, so mpv accepts seeks.
+    loaded: bool,
+    pending_seek: Option<PendingSeek>,
     display_fps: Option<f64>,
     stats: RenderStats,
 }
@@ -339,6 +350,8 @@ impl Player {
             target: None,
             default_scaling: Vec::new(),
             state: PlaybackState::default(),
+            loaded: false,
+            pending_seek: None,
             display_fps: None,
             stats: RenderStats::default(),
         };
@@ -584,11 +597,15 @@ impl Player {
         self.state.position = start;
         self.state.duration = None;
         self.state.eof = false;
+        self.loaded = false;
+        self.pending_seek = None;
         self.stats = RenderStats::default();
         self.command(&["loadfile", &path.to_string_lossy(), "replace"])
     }
 
     pub fn stop(&mut self) {
+        self.loaded = false;
+        self.pending_seek = None;
         let _ = self.command(&["stop"]);
     }
 
@@ -619,6 +636,11 @@ impl Player {
     /// Seeks to `seconds`. `exact` is slower but lands precisely; keyframe seeks are used while
     /// dragging the seek bar.
     pub fn seek(&mut self, seconds: f64, exact: bool) {
+        if !self.loaded {
+            // Replaces anything queued: this is where the user wants to be.
+            self.pending_seek = Some(PendingSeek::To { seconds, exact });
+            return;
+        }
         let mode = if exact {
             "absolute+exact"
         } else {
@@ -628,6 +650,17 @@ impl Player {
     }
 
     pub fn seek_relative(&mut self, seconds: f64) {
+        if !self.loaded {
+            self.pending_seek = Some(match self.pending_seek {
+                Some(PendingSeek::To { seconds: to, exact }) => PendingSeek::To {
+                    seconds: (to + seconds).max(0.0),
+                    exact,
+                },
+                Some(PendingSeek::By(by)) => PendingSeek::By(by + seconds),
+                None => PendingSeek::By(seconds),
+            });
+            return;
+        }
         let _ = self.command(&["seek", &format!("{seconds:.3}"), "relative"]);
     }
 
@@ -701,7 +734,15 @@ impl Player {
             let ev = unsafe { &*(self.lib.wait_event)(self.handle, 0.0) };
             match ev.event_id {
                 ffi::MPV_EVENT_NONE => break,
-                ffi::MPV_EVENT_FILE_LOADED => events.push(PlayerEvent::FileLoaded),
+                ffi::MPV_EVENT_FILE_LOADED => {
+                    self.loaded = true;
+                    match self.pending_seek.take() {
+                        Some(PendingSeek::To { seconds, exact }) => self.seek(seconds, exact),
+                        Some(PendingSeek::By(by)) => self.seek_relative(by),
+                        None => {}
+                    }
+                    events.push(PlayerEvent::FileLoaded);
+                }
                 ffi::MPV_EVENT_END_FILE if !ev.data.is_null() => {
                     let end = unsafe { &*(ev.data as *const ffi::mpv_event_end_file) };
                     if end.reason == ffi::MPV_END_FILE_REASON_ERROR {

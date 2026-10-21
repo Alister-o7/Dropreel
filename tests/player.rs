@@ -407,6 +407,32 @@ fn smooth_motion_and_diagnostics_work_without_a_display() {
 }
 
 #[test]
+fn seeks_asked_for_while_the_file_opens_are_applied_once_it_has() {
+    let Some(fx) = setup() else { return };
+    let mut s = Session::new();
+    // The user hits Space and → the moment the movie opens, before mpv has loaded it.
+    s.player.load(&fx.long, None).unwrap();
+    s.player.set_paused(true);
+    s.player.seek_relative(10.0);
+    s.player.seek_relative(10.0);
+    s.wait("a 20 s jump", LOAD_TIMEOUT, |s| {
+        s.loaded()
+            && s.player
+                .position()
+                .is_some_and(|p| (19.0..21.5).contains(&p))
+    });
+    // An absolute seek replaces anything queued before it.
+    s.player.load(&fx.long, None).unwrap();
+    s.player.seek_relative(10.0);
+    s.player.seek(30.0, true);
+    s.wait("the jump to 0:30", LOAD_TIMEOUT, |s| {
+        s.player
+            .position()
+            .is_some_and(|p| (29.0..31.5).contains(&p))
+    });
+}
+
+#[test]
 fn relative_seek_works_when_paused_right_after_loading() {
     let Some(fx) = setup() else { return };
     let mut s = Session::new();

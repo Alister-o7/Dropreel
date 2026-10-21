@@ -235,30 +235,31 @@ fn handle_keys(ctx: &egui::Context, player: &mut Player, actions: &mut Vec<Actio
     if let Some(id) = ctx.memory(|m| m.focused()) {
         ctx.memory_mut(|m| m.surrender_focus(id));
     }
-    ctx.input_mut(|i| {
-        if i.consume_key(Modifiers::NONE, Key::Space) {
-            let paused = player.paused();
-            player.set_paused(!paused);
-        }
-        if i.consume_key(Modifiers::NONE, Key::ArrowLeft) {
-            player.seek_relative(-10.0);
-        }
-        if i.consume_key(Modifiers::NONE, Key::ArrowRight) {
-            player.seek_relative(10.0);
-        }
-        if i.consume_key(Modifiers::NONE, Key::ArrowUp) {
-            let v = player.volume();
-            player.set_volume(v + 5.0);
-        }
-        if i.consume_key(Modifiers::NONE, Key::ArrowDown) {
-            let v = player.volume();
-            player.set_volume(v - 5.0);
-        }
-        if i.consume_key(Modifiers::NONE, Key::M) {
-            let m = player.muted();
-            player.set_muted(!m);
-        }
-    });
+    // Read the keys first and talk to mpv afterwards, so egui's input lock isn't held while mpv
+    // works.
+    let pressed = |key| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, key));
+    if pressed(Key::Space) {
+        let paused = player.paused();
+        player.set_paused(!paused);
+    }
+    if pressed(Key::ArrowLeft) {
+        player.seek_relative(-10.0);
+    }
+    if pressed(Key::ArrowRight) {
+        player.seek_relative(10.0);
+    }
+    if pressed(Key::ArrowUp) {
+        let v = player.volume();
+        player.set_volume(v + 5.0);
+    }
+    if pressed(Key::ArrowDown) {
+        let v = player.volume();
+        player.set_volume(v - 5.0);
+    }
+    if pressed(Key::M) {
+        let m = player.muted();
+        player.set_muted(!m);
+    }
     if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F)) {
         toggle_fullscreen(ctx);
     }

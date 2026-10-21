@@ -425,6 +425,8 @@ fn clicking_a_poster_plays_and_back_saves_the_position() {
     // Pause with the button; the clock stops.
     click(&mut app, "Pause");
     until(&mut app, "paused", |a| has(a, "Play"));
+    // mpv can report one last position just after the pause itself; let that land.
+    run_for(&mut app, Duration::from_millis(300));
     let paused_at = shown_position(&app).unwrap();
     run_for(&mut app, Duration::from_millis(1500));
     assert_eq!(shown_position(&app), Some(paused_at));
