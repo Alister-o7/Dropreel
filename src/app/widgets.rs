@@ -4,23 +4,15 @@ use std::path::Path;
 
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Response, Sense, Shape, Stroke, Ui,
-    Vec2, pos2, vec2,
+    Vec2, epaint::RectShape, pos2, vec2,
 };
 
 use super::icons;
-use super::theme::{self, Palette, palette};
+use super::theme::{self, Axis, Palette, media, palette};
 use crate::util::file_uri;
 
-/// A stable colour per title for poster placeholders.
-fn placeholder_hue(title: &str) -> f32 {
-    let hash = title
-        .bytes()
-        .fold(5381u32, |h, b| h.wrapping_mul(33) ^ u32::from(b));
-    (hash % 360) as f32 / 360.0
-}
-
 /// Paints the poster into `rect`, cropped to fill. While loading, or without a poster, draws a
-/// gradient placeholder with a film icon and the title.
+/// grey gradient placeholder with the logo's droplet and the title.
 pub fn paint_poster(
     ui: &Ui,
     rect: Rect,
@@ -48,9 +40,7 @@ pub fn paint_poster(
             .paint_at(ui, rect);
         return;
     }
-    let hue = placeholder_hue(title);
-    let top: Color32 = egui::ecolor::Hsva::new(hue, 0.45, 0.42, 1.0).into();
-    let bottom: Color32 = egui::ecolor::Hsva::new((hue + 0.08) % 1.0, 0.55, 0.18, 1.0).into();
+    let (top, bottom) = (theme::ramp::N700, theme::ramp::N850);
     let (top, bottom) = if dim {
         (top.gamma_multiply(0.4), bottom.gamma_multiply(0.4))
     } else {
@@ -81,7 +71,7 @@ pub fn paint_poster(
     painter.circle_filled(
         rect.left_top() + rect.size() * vec2(0.2, 0.1),
         rect.width() * 0.75,
-        Color32::from_white_alpha(10),
+        media::GLASS_FAINT,
     );
     let icon_size = (rect.width() * 0.26).clamp(14.0, 56.0);
     let mark = Rect::from_center_size(
@@ -96,14 +86,14 @@ pub fn paint_poster(
         let galley = painter.layout(
             title.to_string(),
             theme::font(13.0, "semibold"),
-            Color32::from_white_alpha(225),
+            media::TEXT_WEAK,
             rect.width() - 20.0,
         );
         let pos = pos2(
             rect.center().x - galley.size().x / 2.0,
             rect.center().y + icon_size * 0.3,
         );
-        painter.galley(pos, galley, Color32::WHITE);
+        painter.galley(pos, galley, media::TEXT);
     }
 }
 
@@ -127,22 +117,14 @@ pub fn glass_disc(painter: &egui::Painter, center: Pos2, radius: f32, icon: &str
     painter.circle_filled(
         center,
         radius * 1.25,
-        Color32::from_white_alpha(14).gamma_multiply(opacity),
+        media::GLASS_FAINT.gamma_multiply(opacity),
     );
-    painter.circle_filled(
-        center,
-        radius,
-        Color32::from_black_alpha(90).gamma_multiply(opacity),
-    );
-    painter.circle_filled(
-        center,
-        radius,
-        Color32::from_white_alpha(34).gamma_multiply(opacity),
-    );
+    painter.circle_filled(center, radius, media::SCRIM_SOFT.gamma_multiply(opacity));
+    painter.circle_filled(center, radius, media::GLASS_STRONG.gamma_multiply(opacity));
     painter.circle_stroke(
         center,
         radius,
-        Stroke::new(1.0, Color32::from_white_alpha(60).gamma_multiply(opacity)),
+        Stroke::new(1.0, media::EDGE.gamma_multiply(opacity)),
     );
     // The play triangle looks centred a little right of the true centre.
     let nudge = if icon == icons::PLAY {
@@ -155,8 +137,21 @@ pub fn glass_disc(painter: &egui::Painter, center: Pos2, radius: f32, icon: &str
         Align2::CENTER_CENTER,
         icon,
         theme::icon_fill_font(radius * 0.9),
-        Color32::WHITE.gamma_multiply(opacity),
+        media::TEXT.gamma_multiply(opacity),
     );
+}
+
+/// A rounded shape in `color` with a black-to-white sheen: full strength at the top, a little
+/// darker at the bottom.
+pub fn sheen_fill(
+    painter: &egui::Painter,
+    rect: Rect,
+    radius: impl Into<CornerRadius>,
+    color: Color32,
+) {
+    let tex = theme::gradient(painter.ctx(), Axis::Vertical);
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    painter.add(RectShape::filled(rect, radius, color).with_texture(tex, uv));
 }
 
 /// A rectangle filled with a top-to-bottom gradient.
@@ -221,7 +216,8 @@ pub fn progress_ring(
     painter.add(Shape::line(points, Stroke::new(width, color)));
 }
 
-/// A thin rounded progress bar in the text colour, filling the available width.
+/// A thin rounded progress bar filling the available width: the text colour, fading in from
+/// dim at the start to full strength at the leading edge.
 pub fn progress_bar(ui: &mut Ui, fraction: f32, height: f32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let p = palette(ui.ctx());
@@ -230,7 +226,10 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, height: f32) -> Response {
     let mut done = rect;
     done.set_width(rect.width() * fraction.clamp(0.0, 1.0));
     if done.width() > 0.5 {
-        ui.painter().rect_filled(done, r, p.text);
+        let tex = theme::gradient(ui.ctx(), Axis::Horizontal);
+        let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+        ui.painter()
+            .add(RectShape::filled(done, r, p.text).with_texture(tex, uv));
     }
     resp
 }
@@ -303,8 +302,8 @@ fn kind_colors(p: &Palette, kind: ButtonKind) -> (Color32, Color32) {
     match kind {
         ButtonKind::Primary => (p.text, p.bg),
         ButtonKind::Secondary => (p.raised, p.text),
-        ButtonKind::Warn => (p.warn, if p.dark { p.bg } else { Color32::WHITE }),
-        ButtonKind::Danger => (p.danger, Color32::WHITE),
+        ButtonKind::Warn => (p.warn, p.bg),
+        ButtonKind::Danger => (p.danger, theme::ramp::WHITE),
         ButtonKind::Ghost => (Color32::TRANSPARENT, p.text_weak),
     }
 }
@@ -346,7 +345,7 @@ pub fn button_sized(
         ButtonKind::Ghost => Color32::TRANSPARENT.lerp_to_gamma(p.hover, t),
         ButtonKind::Secondary => fill.lerp_to_gamma(p.hover, t),
         ButtonKind::Primary => fill.lerp_to_gamma(p.text_weak, 0.3 * t),
-        _ => fill.lerp_to_gamma(Color32::WHITE, 0.14 * t),
+        _ => fill.lerp_to_gamma(theme::ramp::WHITE, 0.14 * t),
     };
     let (bg, fg_alpha) = if enabled {
         (bg, 1.0)
@@ -354,7 +353,11 @@ pub fn button_sized(
         (bg.gamma_multiply(0.45), 0.5)
     };
     let radius = CornerRadius::same(10);
-    ui.painter().rect_filled(rect, radius, bg);
+    if matches!(kind, ButtonKind::Primary | ButtonKind::Warn) {
+        sheen_fill(ui.painter(), rect, radius, bg);
+    } else {
+        ui.painter().rect_filled(rect, radius, bg);
+    }
     if kind == ButtonKind::Secondary {
         ui.painter().rect_stroke(
             rect,

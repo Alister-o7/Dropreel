@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Color32, Key, Modifiers, Rect, RichText, Sense, Vec2, pos2, vec2};
 
 use super::icons;
-use super::theme;
+use super::theme::{self, media};
 use super::widgets;
 use super::{Action, DropReelApp};
 use crate::library::MovieId;
@@ -165,7 +165,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     // In a window the bar has its own space below the video and stays visible.
     let show_controls = !fullscreen || recently_active;
 
-    let panel_frame = egui::Frame::NONE.fill(Color32::BLACK);
+    let panel_frame = egui::Frame::NONE.fill(theme::ramp::N950);
     egui::CentralPanel::no_frame()
         .frame(panel_frame)
         .show(ui, |ui| {
@@ -303,18 +303,13 @@ fn controls(
     painter.rect_filled(bar, 0.0, theme::ramp::N950.gamma_multiply(bar_opacity));
     if show_title {
         let fade = Rect::from_min_max(top.left_top(), pos2(top.right(), top.bottom() + 36.0));
-        widgets::vertical_gradient(
-            &painter,
-            fade,
-            Color32::from_black_alpha(170),
-            Color32::TRANSPARENT,
-        );
+        widgets::vertical_gradient(&painter, fade, media::SCRIM_STRONG, Color32::TRANSPARENT);
         painter.text(
             top.left_center() + vec2(20.0, 0.0),
             egui::Align2::LEFT_CENTER,
             &np.title,
             theme::font(18.0, "semibold"),
-            Color32::WHITE,
+            media::TEXT,
         );
     }
     np.controls_hovered = ui
@@ -325,9 +320,10 @@ fn controls(
     ui.scope_builder(
         egui::UiBuilder::new().max_rect(bar.shrink2(vec2(16.0, 10.0))),
         |ui| {
-            *ui.visuals_mut() = egui::Visuals::dark();
-            ui.visuals_mut().selection.bg_fill = theme::DARK.accent;
-            ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_white_alpha(40);
+            // The bar is always dark, whatever the theme.
+            *ui.visuals_mut() = theme::visuals(&theme::DARK);
+            ui.visuals_mut().selection.bg_fill = media::TEXT;
+            ui.visuals_mut().widgets.inactive.bg_fill = media::HAIRLINE;
             ui.spacing_mut().interact_size.y = 26.0;
 
             // Seek bar
@@ -337,7 +333,7 @@ fn controls(
                 ui.label(
                     RichText::new(format_duration(shown))
                         .monospace()
-                        .color(Color32::WHITE),
+                        .color(media::TEXT),
                 );
                 let time_w = 70.0;
                 ui.spacing_mut().slider_width = (ui.available_width() - time_w).max(50.0);
@@ -375,7 +371,7 @@ fn controls(
                 ui.label(
                     RichText::new(format_duration(duration))
                         .monospace()
-                        .color(Color32::WHITE),
+                        .color(media::TEXT),
                 );
             });
 
@@ -439,12 +435,9 @@ fn player_button(ui: &mut egui::Ui, icon: &str, size: f32, tooltip: &str) -> egu
     let t = ui
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
-    ui.painter().circle_filled(
-        rect.center(),
-        19.0,
-        Color32::from_white_alpha((28.0 * t) as u8),
-    );
-    let color = Color32::from_white_alpha((200.0 + 55.0 * t) as u8);
+    ui.painter()
+        .circle_filled(rect.center(), 19.0, media::GLASS.gamma_multiply(t));
+    let color = media::TEXT_WEAK.lerp_to_gamma(media::TEXT, t);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -465,7 +458,7 @@ fn play_button(ui: &mut egui::Ui, paused: bool) -> egui::Response {
     ui.painter().circle_filled(
         rect.center(),
         22.0 + 1.5 * t,
-        Color32::WHITE.lerp_to_gamma(Color32::from_gray(200), t),
+        media::TEXT.lerp_to_gamma(theme::ramp::N300, t),
     );
     let (icon, nudge) = if paused {
         (icons::PLAY, 2.0)

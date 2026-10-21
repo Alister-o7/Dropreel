@@ -1,12 +1,12 @@
-//! Look and feel: Inter typography, Phosphor icons, the dark/light palettes and the bundled
-//! artwork. The interface itself is monochrome and high-contrast; colour comes from the posters
-//! and the artwork.
+//! Look and feel: Inter typography, Phosphor icons, the Midnight palettes (greys and red) and
+//! the bundled artwork.
 
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, RichText,
-    Shadow, Stroke, TextStyle, TextureOptions, Theme, vec2,
+    self, Color32, ColorImage, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Id,
+    Margin, RichText, Shadow, Stroke, TextStyle, TextureHandle, TextureId, TextureOptions, Theme,
+    vec2,
 };
 
 const INTER_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
@@ -19,7 +19,7 @@ const PHOSPHOR_FILL: &[u8] = include_bytes!("../../assets/fonts/Phosphor-Fill.tt
 pub const LOGO_MARK_URI: &str = "bytes://dropreel-mark.png";
 /// Illustration for the empty library.
 pub const EMPTY_ART_URI: &str = "bytes://dropreel-empty.jpg";
-/// Soft indigo-to-pink light ribbons, behind the drop overlay and the sidebar header.
+/// Soft ribbons of light in greyscale, behind the drop overlay and the sidebar header.
 pub const AURORA_URI: &str = "bytes://dropreel-aurora.jpg";
 
 /// Downscaled images (logo, artwork) stay smooth with mipmaps.
@@ -47,25 +47,30 @@ pub struct Palette {
     pub dark: bool,
 }
 
-/// The "Midnight" scheme: a cool neutral ramp from near-black to white. The interface is built
-/// from these greys alone; white (or, on the light theme, near-black) is the accent, and colour is
-/// left to the posters, the artwork and the three status hues below.
+/// The "Midnight" scheme: pure greys from black to white, and red. The interface uses no other
+/// hue: white (dark theme) or black (light theme) is the accent and also marks warnings and
+/// success; red is kept for errors, missing files and deleting. Colour otherwise comes from the
+/// posters.
 pub mod ramp {
     use super::Color32;
 
-    pub const N950: Color32 = Color32::from_rgb(4, 4, 6);
-    pub const N900: Color32 = Color32::from_rgb(10, 10, 13);
-    pub const N850: Color32 = Color32::from_rgb(17, 17, 21);
-    pub const N800: Color32 = Color32::from_rgb(25, 25, 31);
-    pub const N750: Color32 = Color32::from_rgb(35, 35, 43);
-    pub const N700: Color32 = Color32::from_rgb(48, 48, 58);
-    pub const N600: Color32 = Color32::from_rgb(82, 82, 94);
-    pub const N400: Color32 = Color32::from_rgb(170, 170, 182);
-    pub const N300: Color32 = Color32::from_rgb(208, 208, 218);
-    pub const N200: Color32 = Color32::from_rgb(226, 226, 234);
-    pub const N100: Color32 = Color32::from_rgb(240, 240, 245);
-    pub const N50: Color32 = Color32::from_rgb(248, 248, 251);
+    pub const N950: Color32 = Color32::from_gray(0);
+    pub const N900: Color32 = Color32::from_gray(10);
+    pub const N850: Color32 = Color32::from_gray(17);
+    pub const N800: Color32 = Color32::from_gray(26);
+    pub const N750: Color32 = Color32::from_gray(36);
+    pub const N700: Color32 = Color32::from_gray(51);
+    pub const N600: Color32 = Color32::from_gray(85);
+    pub const N400: Color32 = Color32::from_gray(166);
+    pub const N300: Color32 = Color32::from_gray(212);
+    pub const N200: Color32 = Color32::from_gray(229);
+    pub const N100: Color32 = Color32::from_gray(240);
+    pub const N50: Color32 = Color32::from_gray(247);
     pub const WHITE: Color32 = Color32::WHITE;
+
+    /// The one hue: bright on black, deeper on white.
+    pub const RED: Color32 = Color32::from_rgb(255, 69, 58);
+    pub const RED_DEEP: Color32 = Color32::from_rgb(215, 20, 30);
 }
 
 pub const DARK: Palette = Palette {
@@ -80,9 +85,9 @@ pub const DARK: Palette = Palette {
     accent: ramp::WHITE,
     // White at 10%, premultiplied.
     accent_soft: Color32::from_rgba_premultiplied(26, 26, 26, 26),
-    warn: Color32::from_rgb(255, 196, 64),
-    danger: Color32::from_rgb(255, 99, 99),
-    success: Color32::from_rgb(74, 222, 128),
+    warn: ramp::WHITE,
+    danger: ramp::RED,
+    success: ramp::WHITE,
     dark: true,
 };
 
@@ -98,11 +103,78 @@ pub const LIGHT: Palette = Palette {
     accent: ramp::N950,
     // Black at 7%, premultiplied.
     accent_soft: Color32::from_rgba_premultiplied(0, 0, 0, 18),
-    warn: Color32::from_rgb(180, 83, 9),
-    danger: Color32::from_rgb(200, 30, 45),
-    success: Color32::from_rgb(21, 128, 61),
+    warn: ramp::N950,
+    danger: ramp::RED_DEEP,
+    success: ramp::N950,
     dark: false,
 };
+
+/// Midnight colours for anything painted over posters, artwork or video. Those stay dark on
+/// either theme, so these don't change with it: white content on black scrims and white "glass".
+pub mod media {
+    use super::Color32;
+
+    /// Text and icons.
+    pub const TEXT: Color32 = Color32::WHITE;
+    pub const TEXT_WEAK: Color32 = Color32::from_rgba_premultiplied(200, 200, 200, 200);
+    /// Frosted fills, from barely there to clearly visible.
+    pub const GLASS_FAINT: Color32 = Color32::from_rgba_premultiplied(14, 14, 14, 14);
+    pub const GLASS: Color32 = Color32::from_rgba_premultiplied(24, 24, 24, 24);
+    pub const GLASS_STRONG: Color32 = Color32::from_rgba_premultiplied(34, 34, 34, 34);
+    /// Tracks, rails and quiet outlines.
+    pub const HAIRLINE: Color32 = Color32::from_rgba_premultiplied(40, 40, 40, 40);
+    /// The rim of glass controls and frames.
+    pub const EDGE: Color32 = Color32::from_rgba_premultiplied(64, 64, 64, 64);
+    /// Darkening layers, so white content reads on any image.
+    pub const SCRIM_SOFT: Color32 = Color32::from_black_alpha(100);
+    pub const SCRIM: Color32 = Color32::from_black_alpha(140);
+    pub const SCRIM_STRONG: Color32 = Color32::from_black_alpha(180);
+    /// Badges: white with black content, or red with white.
+    pub const PILL: Color32 = Color32::WHITE;
+    pub const ON_PILL: Color32 = super::ramp::N950;
+    pub const DANGER: Color32 = super::ramp::RED_DEEP;
+}
+
+/// Which way a black-to-white gradient runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
+    /// Light at the top, darker at the bottom: a sheen for buttons and chips.
+    Vertical,
+    /// Darker at the start, white at the end: progress fills.
+    Horizontal,
+}
+
+/// A greyscale gradient texture, white at its bright end. Painted multiplied by a colour, it
+/// shades that colour from `0.78×` (vertical) or `0.45×` (horizontal) up to full strength.
+pub fn gradient(ctx: &egui::Context, axis: Axis) -> TextureId {
+    let id = Id::unique(match axis {
+        Axis::Vertical => "midnight-gradient-v",
+        Axis::Horizontal => "midnight-gradient-h",
+    });
+    if let Some(tex) = ctx.data(|d| d.get_temp::<TextureHandle>(id)) {
+        return tex.id();
+    }
+    const N: usize = 64;
+    let (size, low) = match axis {
+        Axis::Vertical => ([1, N], 0.78),
+        Axis::Horizontal => ([N, 1], 0.45),
+    };
+    let pixels = (0..N)
+        .map(|i| {
+            let t = i as f32 / (N - 1) as f32;
+            let t = if axis == Axis::Vertical { 1.0 - t } else { t };
+            Color32::from_gray((255.0 * (low + (1.0 - low) * t)).round() as u8)
+        })
+        .collect();
+    let tex = ctx.load_texture(
+        format!("{id:?}"),
+        ColorImage::new(size, pixels),
+        TextureOptions::LINEAR,
+    );
+    let tex_id = tex.id();
+    ctx.data_mut(|d| d.insert_temp(id, tex));
+    tex_id
+}
 
 pub fn palette(ctx: &egui::Context) -> &'static Palette {
     if ctx.theme() == Theme::Dark {
@@ -235,6 +307,12 @@ fn style_for(p: &Palette) -> egui::Style {
     s.icon_width = 16.0;
     s.scroll = egui::style::ScrollStyle::floating();
 
+    style.visuals = visuals(p);
+    style
+}
+
+/// egui's visuals in Midnight colours. The player bar uses the dark ones on either theme.
+pub fn visuals(p: &Palette) -> egui::Visuals {
     let mut v = if p.dark {
         egui::Visuals::dark()
     } else {
@@ -298,8 +376,7 @@ fn style_for(p: &Palette) -> egui::Style {
     w.open.bg_stroke = Stroke::new(1.0, p.border);
     w.open.fg_stroke = Stroke::new(1.0, p.text);
     w.open.corner_radius = radius;
-    style.visuals = v;
-    style
+    v
 }
 
 /// Installs fonts, both theme styles, the logo and the artwork. Call once at startup.

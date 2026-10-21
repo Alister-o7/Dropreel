@@ -6,7 +6,7 @@ use eframe::egui::{
 
 use super::icons;
 use super::library_view::{encode_progress_text, movie_menu};
-use super::theme::{self, palette};
+use super::theme::{self, media, palette};
 use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, EncodeBadge};
 use crate::util::{format_bytes, format_date, format_duration};
@@ -33,9 +33,9 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
             widgets::vertical_gradient(ui.painter(), fade, Color32::TRANSPARENT, p.surface);
             let close = Rect::from_center_size(hero.right_top() + vec2(-26.0, 26.0), Vec2::splat(34.0));
             let close_resp = widgets::named(ui.interact(close, ui.scope_id().with("close"), Sense::click()), "Close").on_hover_text("Close");
-            let bg = if close_resp.hovered() { 210 } else { 150 };
-            ui.painter().circle_filled(close.center(), 17.0, Color32::from_black_alpha(bg));
-            ui.painter().text(close.center(), Align2::CENTER_CENTER, icons::X, theme::icon_font(18.0), Color32::WHITE);
+            let bg = if close_resp.hovered() { media::SCRIM_STRONG } else { media::SCRIM };
+            ui.painter().circle_filled(close.center(), 17.0, bg);
+            ui.painter().text(close.center(), Align2::CENTER_CENTER, icons::X, theme::icon_font(18.0), media::TEXT);
             if close_resp.clicked() {
                 app.actions.push(Action::CloseDetails);
             }
@@ -251,8 +251,7 @@ fn tag_chip(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
         .layout_no_wrap(label, theme::font(13.0, "medium"), fg);
     let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(20.0, 10.0), Sense::click());
     if on {
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::same(255), p.text);
+        widgets::sheen_fill(ui.painter(), rect, egui::CornerRadius::same(255), p.text);
     } else {
         let fill = if resp.hovered() { p.hover } else { p.raised };
         ui.painter()

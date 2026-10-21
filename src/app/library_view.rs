@@ -8,7 +8,7 @@ use egui_extras::{Column, TableBuilder};
 
 use super::icons;
 use super::state::{Layout, Library, Shelf, SortKey};
-use super::theme::{self, palette};
+use super::theme::{self, media, palette};
 use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, EncodeBadge};
 use crate::library::{Movie, MovieId};
@@ -157,8 +157,8 @@ fn logo(ui: &mut egui::Ui, size: f32) {
     let painter = ui.painter();
     let r = size / 2.0;
     if p.dark {
-        painter.circle_filled(rect.center(), r, Color32::from_white_alpha(14));
-        painter.circle_filled(rect.center(), r * 0.8, Color32::from_white_alpha(22));
+        painter.circle_filled(rect.center(), r, media::GLASS_FAINT);
+        painter.circle_filled(rect.center(), r * 0.8, media::GLASS);
     } else {
         painter.circle_filled(rect.center(), r, p.text);
     }
@@ -648,7 +648,7 @@ fn card(
             offset: [0, 14],
             blur: 32,
             spread: 0,
-            color: Color32::from_black_alpha((120.0 * t) as u8),
+            color: media::SCRIM.gamma_multiply(t),
         };
         painter.add(shadow.as_shape(poster, RADIUS));
     }
@@ -672,7 +672,7 @@ fn card(
             painter,
             lower,
             Color32::TRANSPARENT,
-            Color32::from_black_alpha((180.0 * t) as u8),
+            media::SCRIM_STRONG.gamma_multiply(t),
         );
         painter.rect_filled(
             Rect::from_min_max(
@@ -685,30 +685,26 @@ fn card(
                 sw: RADIUS,
                 se: RADIUS,
             },
-            Color32::from_black_alpha((180.0 * t) as u8),
+            media::SCRIM_STRONG.gamma_multiply(t),
         );
         if !missing {
             widgets::glass_disc(painter, poster.center(), 22.0 + 4.0 * t, icons::PLAY, t);
         }
         let info_center = info_rect.center() + vec2(0.0, -4.0 * t);
-        painter.circle_filled(
-            info_center,
-            15.0,
-            Color32::from_black_alpha((170.0 * t) as u8),
-        );
+        painter.circle_filled(info_center, 15.0, media::SCRIM_STRONG.gamma_multiply(t));
         painter.text(
             info_center,
             Align2::CENTER_CENTER,
             icons::INFO,
             theme::icon_font(18.0),
-            Color32::WHITE.gamma_multiply(t),
+            media::TEXT.gamma_multiply(t),
         );
     }
     if selected == Some(id) || t > 0.01 {
         let color = if selected == Some(id) {
             p.accent
         } else {
-            Color32::from_white_alpha(40).gamma_multiply(t)
+            media::HAIRLINE.gamma_multiply(t)
         };
         painter.rect_stroke(
             poster,
@@ -727,8 +723,8 @@ fn card(
             Align2::LEFT_TOP,
             Some(icons::WARNING),
             "Missing",
-            p.danger,
-            Color32::WHITE,
+            media::DANGER,
+            media::TEXT,
         );
         y = r.bottom() + 4.0;
     }
@@ -739,9 +735,8 @@ fn card(
             Align2::LEFT_TOP,
             Some(icons::LIGHTNING),
             &format_bytes(movie.size),
-            // Over a poster: always the bright amber, whatever the theme.
-            theme::DARK.warn,
-            theme::ramp::N950,
+            media::PILL,
+            media::ON_PILL,
         );
     }
     if movie.watched {
@@ -751,8 +746,8 @@ fn card(
             Align2::RIGHT_BOTTOM,
             Some(icons::CHECK),
             "",
-            p.success,
-            Color32::WHITE,
+            media::PILL,
+            media::ON_PILL,
         );
     }
     if let (Some(pos), Some(dur)) = (movie.resume_pos, movie.duration)
@@ -764,15 +759,15 @@ fn card(
             poster.left_bottom() + vec2(10.0, -10.0),
             poster.right_bottom() + vec2(-10.0, -6.0),
         );
-        painter.rect_filled(bar, 2, Color32::from_black_alpha(140));
+        painter.rect_filled(bar, 2, media::SCRIM);
         let mut done = bar;
         done.set_width(bar.width() * (pos / dur).clamp(0.0, 1.0) as f32);
-        painter.rect_filled(done, 2, Color32::WHITE);
+        painter.rect_filled(done, 2, media::TEXT);
     }
 
     // Encode overlay
     if let Some(badge) = encode {
-        painter.rect_filled(poster, RADIUS, Color32::from_black_alpha(175));
+        painter.rect_filled(poster, RADIUS, media::SCRIM_STRONG);
         let (fraction, label) = match badge {
             EncodeBadge::Running(s) => (s.fraction, format!("{:.0}%", s.fraction * 100.0)),
             EncodeBadge::Queued(n) => (0.0, format!("#{}", n + 1)),
@@ -783,8 +778,8 @@ fn card(
             center,
             30.0,
             fraction,
-            p.accent,
-            Color32::from_white_alpha(40),
+            media::TEXT,
+            media::HAIRLINE,
             5.0,
         );
         painter.text(
@@ -792,7 +787,7 @@ fn card(
             Align2::CENTER_CENTER,
             label,
             theme::font(16.0, "bold"),
-            Color32::WHITE,
+            media::TEXT,
         );
         let caption = if matches!(badge, EncodeBadge::Running(_)) {
             "Re-encoding"
@@ -804,7 +799,7 @@ fn card(
             Align2::CENTER_CENTER,
             caption,
             theme::font(12.5, "semibold"),
-            Color32::from_white_alpha(220),
+            media::TEXT_WEAK,
         );
     }
 
@@ -1119,18 +1114,18 @@ pub fn drop_overlay(ctx: &egui::Context) {
             Color32::WHITE.gamma_multiply(0.85),
         );
     }
-    painter.rect_filled(rect, 0.0, Color32::from_black_alpha(110));
+    painter.rect_filled(rect, 0.0, media::SCRIM_SOFT);
     let inner = rect.shrink(28.0);
     painter.rect_stroke(
         inner,
         28,
-        Stroke::new(2.0, Color32::from_white_alpha(70)),
+        Stroke::new(2.0, media::EDGE),
         egui::StrokeKind::Inside,
     );
     let c = rect.center();
     let disc = c - vec2(0.0, 70.0);
-    painter.circle_filled(disc, 74.0, Color32::from_white_alpha(14));
-    painter.circle_filled(disc, 60.0, Color32::from_white_alpha(22));
+    painter.circle_filled(disc, 74.0, media::GLASS_FAINT);
+    painter.circle_filled(disc, 60.0, media::GLASS);
     if let Ok(egui::load::TexturePoll::Ready { texture }) = ctx.try_load_texture(
         theme::LOGO_MARK_URI,
         theme::SMOOTH,
@@ -1150,13 +1145,13 @@ pub fn drop_overlay(ctx: &egui::Context) {
         Align2::CENTER_CENTER,
         "Drop to add to your library",
         theme::font(32.0, "bold"),
-        Color32::WHITE,
+        media::TEXT,
     );
     painter.text(
         c + vec2(0.0, 74.0),
         Align2::CENTER_CENTER,
         "Files and whole folders are both fine",
         theme::font(15.0, "regular"),
-        Color32::from_white_alpha(190),
+        media::TEXT_WEAK,
     );
 }
