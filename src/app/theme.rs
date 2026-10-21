@@ -52,7 +52,7 @@ pub struct Palette {
 }
 
 /// The colour scheme, after Netflix: a near-black page, slightly lighter panels, white text with
-/// a soft grey for secondary text, and one red for primary actions, progress and the current
+/// a soft grey for secondary text, and one brick red for primary actions, progress and the current
 /// selection. Warnings and success use white; red also marks errors and destructive actions.
 pub mod ramp {
     use super::Color32;
@@ -71,9 +71,9 @@ pub mod ramp {
     pub const N50: Color32 = Color32::from_gray(245);
     pub const WHITE: Color32 = Color32::WHITE;
 
-    /// Netflix red, and the deeper red Netflix uses for pressed and text-on-white states.
-    pub const RED: Color32 = Color32::from_rgb(229, 9, 20);
-    pub const RED_DEEP: Color32 = Color32::from_rgb(178, 7, 16);
+    /// A calm brick red, and a deeper one for red text on white.
+    pub const RED: Color32 = Color32::from_rgb(179, 55, 58);
+    pub const RED_DEEP: Color32 = Color32::from_rgb(143, 42, 45);
 }
 
 /// Corner radii: tight, like Netflix's controls and cards.
