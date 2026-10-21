@@ -233,8 +233,13 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
 }
 
 fn handle_keys(ctx: &egui::Context, player: &mut Player, actions: &mut Vec<Action>) {
-    if ctx.egui_wants_keyboard_input() {
+    if ctx.text_edit_focused() {
         return;
+    }
+    // A player button or menu keeps keyboard focus after a mouse click. Drop it, so Space
+    // doesn't also "press" the focused button and the arrow keys don't move focus around.
+    if let Some(id) = ctx.memory(|m| m.focused()) {
+        ctx.memory_mut(|m| m.surrender_focus(id));
     }
     ctx.input_mut(|i| {
         if i.consume_key(Modifiers::NONE, Key::Space) {
@@ -263,7 +268,10 @@ fn handle_keys(ctx: &egui::Context, player: &mut Player, actions: &mut Vec<Actio
     if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F)) {
         toggle_fullscreen(ctx);
     }
-    if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+    // With a track menu open, Esc just closes the menu (egui handles that).
+    if !egui::Popup::is_any_open(ctx)
+        && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+    {
         if is_fullscreen(ctx) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         } else {

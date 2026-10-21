@@ -405,3 +405,25 @@ fn smooth_motion_and_diagnostics_work_without_a_display() {
     s.wait_past(at + 0.3);
     assert!(s.player.diagnostics().contains("video-sync=audio"));
 }
+
+#[test]
+fn relative_seek_works_when_paused_right_after_loading() {
+    let Some(fx) = setup() else { return };
+    let mut s = Session::new();
+    // The user hits Space as the file opens, then →.
+    s.player.load(&fx.long, None).unwrap();
+    s.player.set_paused(true);
+    s.wait("the file to load", LOAD_TIMEOUT, |s| s.loaded());
+    s.idle(Duration::from_millis(200));
+    s.player.seek_relative(10.0);
+    s.wait("a 10 s jump", LOAD_TIMEOUT, |s| {
+        s.player
+            .position()
+            .is_some_and(|p| (9.0..11.5).contains(&p))
+    });
+    s.player.seek_relative(-10.0);
+    s.wait("a jump back", LOAD_TIMEOUT, |s| {
+        s.player.position().is_some_and(|p| p < 1.5)
+    });
+    assert!(s.player.paused());
+}

@@ -591,3 +591,34 @@ fn tracks_can_be_switched_from_the_player_bar() {
         shown_position(a).is_some_and(|p| p >= 2)
     });
 }
+
+#[test]
+fn shortcuts_keep_working_after_clicking_player_buttons() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.long, &root.path().join("movies"), None);
+    let mut app = launch(root.path(), vec![]);
+    drop_files(&mut app, &[file]);
+    click(&mut app, "Long Take");
+    until(&mut app, "playing", |a| in_player(a) && has(a, "Pause"));
+
+    // Pausing with the mouse leaves the button focused...
+    click(&mut app, "Pause");
+    until(&mut app, "paused", |a| has(a, "Play"));
+    let at = shown_position(&app).unwrap();
+    // ...but the keyboard shortcuts still work.
+    app.key_press(Key::ArrowRight);
+    until(&mut app, "a 10 s jump", |a| {
+        shown_position(a).is_some_and(|p| p >= at + 9 && p <= at + 11)
+    });
+    // Space toggles exactly once (not once for the shortcut and once for the focused button).
+    app.key_press(Key::Space);
+    run_for(&mut app, Duration::from_millis(300));
+    assert!(has(&app, "Pause"), "{}", labels(&app));
+    // Same after using a track menu.
+    click(&mut app, "Subtitles: Off");
+    app.key_press(Key::Escape);
+    run_for(&mut app, Duration::from_millis(200));
+    app.key_press(Key::Space);
+    until(&mut app, "paused by keyboard", |a| has(a, "Play"));
+}
