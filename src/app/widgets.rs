@@ -1,26 +1,20 @@
 //! Custom widgets and drawing helpers: posters, pills, buttons, progress ring, gradients.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Response, Sense, Shape, Stroke, Ui,
-    Vec2, pos2, vec2,
+    self, Align2, Color32, CornerRadius, FontId, Galley, Mesh, Pos2, Rect, Response, Sense, Shape,
+    Stroke, Ui, Vec2, pos2, vec2,
 };
 
 use super::icons;
-use super::theme::{self, Palette, palette};
+use super::theme::{self, Palette, media, palette, radius};
 use crate::util::file_uri;
 
-/// A stable colour per title for poster placeholders.
-fn placeholder_hue(title: &str) -> f32 {
-    let hash = title
-        .bytes()
-        .fold(5381u32, |h, b| h.wrapping_mul(33) ^ u32::from(b));
-    (hash % 360) as f32 / 360.0
-}
-
-/// Paints the poster into `rect`, cropped to fill. While loading, or without a poster, draws a
-/// gradient placeholder with a film icon and the title.
+/// Paints the poster into `rect`, cropped to fill. Without a poster, or while it loads, draws a
+/// grey gradient placeholder with the logo's droplet and the title; a loading poster shimmers,
+/// then fades in over it. Returns how far the poster has faded in (0–1).
 pub fn paint_poster(
     ui: &Ui,
     rect: Rect,
@@ -28,29 +22,46 @@ pub fn paint_poster(
     title: &str,
     dim: bool,
     radius: u8,
-) {
+) -> f32 {
     let tint = if dim {
         Color32::from_gray(80)
     } else {
         Color32::WHITE
     };
-    if let Some(path) = poster
-        && let Ok(egui::load::TexturePoll::Ready { texture }) = ui.ctx().try_load_texture(
+    let poll = poster.map(|path| {
+        ui.ctx().try_load_texture(
             &file_uri(path),
             egui::TextureOptions::LINEAR,
             egui::SizeHint::default(),
         )
-    {
+    });
+    let texture = match &poll {
+        Some(Ok(egui::load::TexturePoll::Ready { texture })) => Some(*texture),
+        _ => None,
+    };
+    let loading = matches!(poll, Some(Ok(egui::load::TexturePoll::Pending { .. })));
+    let fade_id = egui::Id::unique("poster-fade").with(poster).with(radius);
+    let shown = ui
+        .ctx()
+        .animate_bool_with_time(fade_id, texture.is_some(), 0.3);
+    if shown < 1.0 {
+        paint_placeholder(ui, rect, title, dim, radius);
+        if loading {
+            shimmer(ui, rect);
+        }
+    }
+    if let Some(texture) = texture {
         egui::Image::new(texture)
             .uv(cover_uv(texture.size, rect.size()))
-            .tint(tint)
+            .tint(tint.gamma_multiply(shown))
             .corner_radius(radius)
             .paint_at(ui, rect);
-        return;
     }
-    let hue = placeholder_hue(title);
-    let top: Color32 = egui::ecolor::Hsva::new(hue, 0.45, 0.42, 1.0).into();
-    let bottom: Color32 = egui::ecolor::Hsva::new((hue + 0.08) % 1.0, 0.55, 0.18, 1.0).into();
+    shown
+}
+
+fn paint_placeholder(ui: &Ui, rect: Rect, title: &str, dim: bool, radius: u8) {
+    let (top, bottom) = (theme::ramp::N700, theme::ramp::N850);
     let (top, bottom) = if dim {
         (top.gamma_multiply(0.4), bottom.gamma_multiply(0.4))
     } else {
@@ -77,27 +88,92 @@ pub fn paint_poster(
         },
         top,
     );
-    let icon_size = (rect.width() * 0.26).clamp(14.0, 56.0);
-    painter.text(
-        rect.center() - vec2(0.0, icon_size * 0.45),
-        Align2::CENTER_CENTER,
-        icons::FILM_SLATE,
-        theme::icon_font(icon_size),
-        Color32::from_white_alpha(120),
+    // A soft highlight in the top corner, then the logo's droplet as a watermark.
+    painter.circle_filled(
+        rect.left_top() + rect.size() * vec2(0.2, 0.1),
+        rect.width() * 0.75,
+        media::GLASS_FAINT,
     );
+    let icon_size = (rect.width() * 0.26).clamp(14.0, 56.0);
+    let mark = Rect::from_center_size(
+        rect.center() - vec2(0.0, icon_size * 0.45),
+        vec2(icon_size * 0.74, icon_size),
+    );
+    egui::Image::new(theme::LOGO_MARK_URI)
+        .texture_options(theme::SMOOTH)
+        .tint(Color32::from_white_alpha(80))
+        .paint_at(ui, mark);
     if rect.width() > 60.0 {
         let galley = painter.layout(
             title.to_string(),
             theme::font(13.0, "semibold"),
-            Color32::from_white_alpha(225),
+            media::TEXT_WEAK,
             rect.width() - 20.0,
         );
         let pos = pos2(
             rect.center().x - galley.size().x / 2.0,
             rect.center().y + icon_size * 0.3,
         );
-        painter.galley(pos, galley, Color32::WHITE);
+        painter.galley(pos, galley, media::TEXT);
     }
+}
+
+/// A soft band of light sweeping across `rect`, for things that are loading.
+fn shimmer(ui: &Ui, rect: Rect) {
+    let phase = (ui.input(|i| i.time) / 1.3).fract() as f32;
+    let band = rect.width() * 0.45;
+    let x = rect.left() - band + phase * (rect.width() + 2.0 * band);
+    let painter = ui.painter_at(rect);
+    let peak = media::GLASS;
+    horizontal_gradient(
+        &painter,
+        Rect::from_min_max(pos2(x - band / 2.0, rect.top()), pos2(x, rect.bottom())),
+        Color32::TRANSPARENT,
+        peak,
+    );
+    horizontal_gradient(
+        &painter,
+        Rect::from_min_max(pos2(x, rect.top()), pos2(x + band / 2.0, rect.bottom())),
+        peak,
+        Color32::TRANSPARENT,
+    );
+    ui.ctx().request_repaint();
+}
+
+/// The visible (inked) bounds of a laid-out galley, relative to its origin.
+fn ink_bounds(galley: &Galley) -> Option<Rect> {
+    let mut ink: Option<Rect> = None;
+    for row in &galley.rows {
+        for glyph in &row.row.glyphs {
+            let size = glyph.uv_rect.size;
+            if size.x <= 0.0 || size.y <= 0.0 {
+                continue;
+            }
+            let min = row.pos + glyph.pos.to_vec2() + glyph.uv_rect.offset;
+            let rect = Rect::from_min_size(min, size);
+            ink = Some(ink.map_or(rect, |r| r.union(rect)));
+        }
+    }
+    ink
+}
+
+/// Paints `galley` with its visible shape centred on `center`.
+pub fn galley_centered(painter: &egui::Painter, center: Pos2, galley: Arc<Galley>, color: Color32) {
+    let ink = ink_bounds(&galley).unwrap_or(galley.rect);
+    painter.galley_with_override_text_color(center - ink.center().to_vec2(), galley, color);
+}
+
+/// Paints an icon with its visible shape centred on `center`. Centring the text layout instead
+/// centres the font's line box, which leaves icons sitting low in circles and badges.
+pub fn icon_centered(
+    painter: &egui::Painter,
+    center: Pos2,
+    icon: &str,
+    font: FontId,
+    color: Color32,
+) {
+    let galley = painter.layout_no_wrap(icon.to_owned(), font, color);
+    galley_centered(painter, center, galley, color);
 }
 
 /// UV rectangle that crops an image of `image` size to fill `target` without stretching.
@@ -113,6 +189,42 @@ pub fn cover_uv(image: Vec2, target: Vec2) -> Rect {
         let h = ia / ta;
         Rect::from_min_max(pos2(0.0, (1.0 - h) / 2.0), pos2(1.0, (1.0 + h) / 2.0))
     }
+}
+
+/// Netflix's play button over a poster: a white disc with a black icon.
+pub fn play_disc(painter: &egui::Painter, center: Pos2, radius: f32, opacity: f32) {
+    painter.circle_filled(
+        center,
+        radius + 3.0,
+        media::SCRIM_SOFT.gamma_multiply(opacity),
+    );
+    painter.circle_filled(center, radius, media::TEXT.gamma_multiply(opacity));
+    play_icon(
+        painter,
+        center,
+        radius * 0.9,
+        media::ON_PILL.gamma_multiply(opacity),
+    );
+}
+
+/// The filled play triangle centred on `center`. A triangle's box centre looks too far left, so
+/// it moves right a little, to the triangle's centroid.
+pub fn play_icon(painter: &egui::Painter, center: Pos2, size: f32, color: Color32) {
+    let galley = painter.layout_no_wrap(icons::PLAY.to_owned(), theme::icon_fill_font(size), color);
+    let width = ink_bounds(&galley).map_or(size, |r| r.width());
+    galley_centered(painter, center + vec2(width / 6.0, 0.0), galley, color);
+}
+
+/// A rectangle filled with a left-to-right gradient.
+pub fn horizontal_gradient(painter: &egui::Painter, rect: Rect, left: Color32, right: Color32) {
+    let mut mesh = Mesh::default();
+    mesh.colored_vertex(rect.left_top(), left);
+    mesh.colored_vertex(rect.right_top(), right);
+    mesh.colored_vertex(rect.left_bottom(), left);
+    mesh.colored_vertex(rect.right_bottom(), right);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 3, 2);
+    painter.add(Shape::mesh(mesh));
 }
 
 /// A rectangle filled with a top-to-bottom gradient.
@@ -143,11 +255,21 @@ pub fn pill(
         Some(i) => format!("{i} {text}"),
         None => text.to_string(),
     };
+    let icon_only = icon.is_some() && text.is_empty();
     let galley = painter.layout_no_wrap(label, theme::font(11.5, "semibold"), fg);
-    let size = galley.size() + vec2(14.0, 6.0);
+    let size = if icon_only {
+        // A square badge around the icon.
+        Vec2::splat(galley.size().y + 6.0)
+    } else {
+        galley.size() + vec2(14.0, 6.0)
+    };
     let rect = anchor.anchor_size(pos, size);
-    painter.rect_filled(rect, CornerRadius::same(255), fill);
-    painter.galley(rect.min + vec2(7.0, 3.0), galley, fg);
+    painter.rect_filled(rect, CornerRadius::same(radius::BADGE), fill);
+    if icon_only {
+        galley_centered(painter, rect.center(), galley, fg);
+    } else {
+        painter.galley(rect.min + vec2(7.0, 3.0), galley, fg);
+    }
     rect
 }
 
@@ -177,16 +299,16 @@ pub fn progress_ring(
     painter.add(Shape::line(points, Stroke::new(width, color)));
 }
 
-/// A thin rounded progress bar filling the available width.
-pub fn progress_bar(ui: &mut Ui, fraction: f32, color: Color32, height: f32) -> Response {
+/// A thin progress bar filling the available width: red over a grey track.
+pub fn progress_bar(ui: &mut Ui, fraction: f32, height: f32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let p = palette(ui.ctx());
-    let r = CornerRadius::same(255);
+    let r = CornerRadius::same(2);
     ui.painter().rect_filled(rect, r, p.hover);
     let mut done = rect;
     done.set_width(rect.width() * fraction.clamp(0.0, 1.0));
     if done.width() > 0.5 {
-        ui.painter().rect_filled(done, r, color);
+        ui.painter().rect_filled(done, r, p.primary);
     }
     resp
 }
@@ -228,15 +350,15 @@ pub fn icon_toggle(ui: &mut Ui, icon: &str, selected: bool, tooltip: &str) -> Re
     } else {
         Color32::TRANSPARENT.lerp_to_gamma(p.hover, t)
     };
-    ui.painter().rect_filled(rect, 8, bg);
+    ui.painter().rect_filled(rect, radius::CONTROL, bg);
     let fg = if selected {
         p.accent
     } else {
         p.text_weak.lerp_to_gamma(p.text, t)
     };
-    ui.painter().text(
+    icon_centered(
+        ui.painter(),
         rect.center(),
-        Align2::CENTER_CENTER,
         icon,
         theme::icon_font(19.0),
         fg,
@@ -257,10 +379,11 @@ pub enum ButtonKind {
 
 fn kind_colors(p: &Palette, kind: ButtonKind) -> (Color32, Color32) {
     match kind {
-        ButtonKind::Primary => (p.accent, Color32::WHITE),
-        ButtonKind::Secondary => (p.raised, p.text),
-        ButtonKind::Warn => (p.warn, Color32::from_rgb(30, 20, 0)),
-        ButtonKind::Danger => (p.danger, Color32::WHITE),
+        ButtonKind::Primary => (p.primary, p.on_primary),
+        ButtonKind::Secondary => (p.secondary, p.text),
+        ButtonKind::Warn => (p.warn, p.bg),
+        // Outlined, so a destructive button never looks like the primary one.
+        ButtonKind::Danger => (Color32::TRANSPARENT, p.danger),
         ButtonKind::Ghost => (Color32::TRANSPARENT, p.text_weak),
     }
 }
@@ -300,18 +423,43 @@ pub fn button_sized(
         .animate_bool_with_time(resp.id, enabled && resp.hovered(), 0.12);
     let bg = match kind {
         ButtonKind::Ghost => Color32::TRANSPARENT.lerp_to_gamma(p.hover, t),
+        // Netflix's grey button fades a little on hover.
+        ButtonKind::Secondary if p.dark => fill.gamma_multiply(1.0 - 0.4 * t),
         ButtonKind::Secondary => fill.lerp_to_gamma(p.hover, t),
-        _ => fill.lerp_to_gamma(Color32::WHITE, 0.14 * t),
+        ButtonKind::Primary => fill.lerp_to_gamma(theme::ramp::WHITE, 0.1 * t),
+        ButtonKind::Danger => Color32::TRANSPARENT.lerp_to_gamma(p.danger.gamma_multiply(0.14), t),
+        ButtonKind::Warn => fill.lerp_to_gamma(theme::ramp::WHITE, 0.14 * t),
     };
     let (bg, fg_alpha) = if enabled {
         (bg, 1.0)
     } else {
         (bg.gamma_multiply(0.45), 0.5)
     };
-    ui.painter().rect_filled(rect, 9, bg);
-    let pos = rect.center() - galley.size() / 2.0;
-    ui.painter()
-        .galley_with_override_text_color(pos, galley, fg.gamma_multiply(fg_alpha));
+    let radius = CornerRadius::same(radius::CONTROL);
+    ui.painter().rect_filled(rect, radius, bg);
+    let outline = match kind {
+        ButtonKind::Secondary if !p.dark => {
+            Some(Stroke::new(1.0, p.border.gamma_multiply(1.0 - t)))
+        }
+        ButtonKind::Danger => Some(Stroke::new(1.5, p.danger.gamma_multiply(fg_alpha))),
+        _ => None,
+    };
+    if let Some(stroke) = outline {
+        ui.painter()
+            .rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
+    }
+    if label.is_empty() {
+        galley_centered(
+            ui.painter(),
+            rect.center(),
+            galley,
+            fg.gamma_multiply(fg_alpha),
+        );
+    } else {
+        let pos = rect.center() - galley.size() / 2.0;
+        ui.painter()
+            .galley_with_override_text_color(pos, galley, fg.gamma_multiply(fg_alpha));
+    }
     let resp = if label.is_empty() {
         resp
     } else {
@@ -342,16 +490,22 @@ pub fn nav_item(
     } else {
         Color32::TRANSPARENT.lerp_to_gamma(p.hover, t)
     };
-    ui.painter().rect_filled(rect, 8, bg);
+    ui.painter().rect_filled(rect, radius::CONTROL, bg);
+    if selected {
+        // A short bar marks the current shelf.
+        let bar = Rect::from_center_size(rect.left_center() + vec2(1.5, 0.0), vec2(3.0, 16.0));
+        ui.painter()
+            .rect_filled(bar, CornerRadius::same(2), p.primary);
+    }
     let fg = if selected {
         p.text
     } else {
         p.text_weak.lerp_to_gamma(p.text, t)
     };
     let icon_color = if selected { p.accent } else { fg };
-    ui.painter().text(
-        rect.left_center() + vec2(12.0, 0.0),
-        Align2::LEFT_CENTER,
+    icon_centered(
+        ui.painter(),
+        rect.left_center() + vec2(21.0, 0.0),
         icon,
         theme::icon_font(18.0),
         icon_color,
@@ -365,13 +519,24 @@ pub fn nav_item(
         fg,
     );
     if let Some(n) = count {
-        ui.painter().text(
-            rect.right_center() - vec2(12.0, 0.0),
-            Align2::RIGHT_CENTER,
+        let galley = ui.painter().layout_no_wrap(
             n.to_string(),
-            theme::font(12.0, "medium"),
-            p.text_weak,
+            theme::font(11.5, "semibold"),
+            if selected { p.text } else { p.text_weak },
         );
+        let badge = Align2::RIGHT_CENTER.anchor_size(
+            rect.right_center() - vec2(8.0, 0.0),
+            vec2((galley.size().x + 12.0).max(22.0), 20.0),
+        );
+        let badge_fill = if selected {
+            p.accent.gamma_multiply(0.16)
+        } else {
+            p.raised
+        };
+        ui.painter()
+            .rect_filled(badge, CornerRadius::same(radius::CONTROL), badge_fill);
+        ui.painter()
+            .galley(badge.center() - galley.size() / 2.0, galley, p.text_weak);
     }
     named_selectable(resp, label, selected).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -405,7 +570,7 @@ pub fn callout<R>(
     egui::Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0, color.gamma_multiply(0.45)))
-        .corner_radius(12)
+        .corner_radius(radius::CARD)
         .inner_margin(14)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -433,11 +598,17 @@ pub fn chip(ui: &mut Ui, icon: Option<&str>, text: &str) -> Response {
     let galley = ui
         .painter()
         .layout_no_wrap(label, theme::font(12.5, "medium"), p.text_weak);
-    let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(16.0, 8.0), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(18.0, 10.0), Sense::hover());
     ui.painter()
-        .rect_filled(rect, CornerRadius::same(255), p.raised);
+        .rect_filled(rect, CornerRadius::same(radius::CONTROL), p.raised);
+    ui.painter().rect_stroke(
+        rect,
+        CornerRadius::same(radius::CONTROL),
+        Stroke::new(1.0, p.border),
+        egui::StrokeKind::Inside,
+    );
     ui.painter()
-        .galley(rect.min + vec2(8.0, 4.0), galley, p.text_weak);
+        .galley(rect.min + vec2(9.0, 5.0), galley, p.text_weak);
     resp
 }
 

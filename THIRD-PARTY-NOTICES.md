@@ -37,7 +37,11 @@ DropReel.
 
 - © Phosphor Icons — https://phosphoricons.com
 - License: MIT (`licenses/LICENSE-Phosphor.txt`)
-- The DropReel app icon is drawn from Phosphor's "film-reel" icon.
+
+## DropReel logo and artwork
+
+- The app icon (`assets/icon*`), the logo mark (`assets/logo-mark.png`) and the illustrations in
+  `assets/art/` were generated for DropReel with FLUX 3 (Black Forest Labs) via fal.ai.
 
 ## Rust crates
 

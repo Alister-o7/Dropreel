@@ -358,13 +358,16 @@ fn settings_are_saved_to_disk() {
     let mut app = launch(root.path(), vec![]);
     click(&mut app, "Settings");
     until(&mut app, "the settings dialog", |a| has(a, "Smooth motion"));
+    // Off on a fresh install; turn it on.
     click(&mut app, "Smooth motion");
     click(&mut app, "Save");
     until(&mut app, "the dialog to close", |a| {
         !has(a, "Smooth motion")
     });
     let text = std::fs::read_to_string(root.path().join("data").join("settings.toml")).unwrap();
-    assert!(text.contains("smooth_motion = false"), "{text}");
+    assert!(text.contains("smooth_motion = true"), "{text}");
+    assert!(text.contains("high_quality_video = true"), "{text}");
+    assert!(text.contains("hide_controls_after = 2.5"), "{text}");
 
     // Cancel throws changes away.
     click(&mut app, "Settings");
@@ -373,6 +376,71 @@ fn settings_are_saved_to_disk() {
     click(&mut app, "Cancel");
     let again = std::fs::read_to_string(root.path().join("data").join("settings.toml")).unwrap();
     assert_eq!(text, again);
+}
+
+/// Types into the text field that currently holds `value`.
+fn type_into_field(app: &mut App, value: &str, text: &str) {
+    let holds = |n: &egui_kittest::Node<'_>| n.accesskit_node().value().as_deref() == Some(value);
+    until(app, &format!("a field holding \"{value}\""), |a| {
+        a.get_all_by_role(Role::TextInput).any(|n| holds(&n))
+    });
+    app.get_all_by_role(Role::TextInput)
+        .find(|n| holds(n))
+        .unwrap()
+        .focus();
+    app.step();
+    app.get_all_by_role(Role::TextInput)
+        .find(|n| holds(n))
+        .unwrap()
+        .type_text(text);
+    app.step();
+}
+
+#[test]
+fn tags_can_be_renamed_and_deleted() {
+    let (Some(_), Some(fx)) = (tools(), fixtures()) else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.mkv, &root.path().join("movies"), None);
+    let mut app = launch(root.path(), vec![]);
+    drop_files(&mut app, &[file]);
+
+    // Tag the movie from its details panel.
+    click(&mut app, "Details: The Test Movie");
+    until(&mut app, "details", |a| has(a, "Remove from library"));
+    let field = app.get_by_label("New tag");
+    field.focus();
+    app.step();
+    app.get_by_label("New tag").type_text("Noir");
+    app.step();
+    click(&mut app, "Add");
+    until(&mut app, "the tag", |a| {
+        has(a, "Rename tag Noir") || has(a, "Noir")
+    });
+
+    // Rename it from Settings.
+    click(&mut app, "Settings");
+    click(&mut app, "Rename tag Noir");
+    until(&mut app, "the rename dialog", |a| has(a, "Rename tag"));
+    type_into_field(&mut app, "Noir", " classics");
+    click(&mut app, "Rename");
+    until(&mut app, "the new name", |a| {
+        has(a, "Rename tag Noir classics")
+    });
+    let tags = db(root.path()).all_tags().unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].name, "Noir classics");
+
+    // Delete it: the movie stays.
+    click(&mut app, "Delete tag Noir classics");
+    until(&mut app, "the confirmation", |a| has(a, "Delete tag?"));
+    click(&mut app, "Delete tag");
+    until(&mut app, "the tag to go", |a| {
+        !has(a, "Delete tag Noir classics")
+    });
+    assert!(db(root.path()).all_tags().unwrap().is_empty());
+    assert_eq!(db(root.path()).all_movies().unwrap().len(), 1);
 }
 
 #[test]
@@ -425,6 +493,8 @@ fn clicking_a_poster_plays_and_back_saves_the_position() {
     // Pause with the button; the clock stops.
     click(&mut app, "Pause");
     until(&mut app, "paused", |a| has(a, "Play"));
+    // mpv can report one last position just after the pause itself; let that land.
+    run_for(&mut app, Duration::from_millis(300));
     let paused_at = shown_position(&app).unwrap();
     run_for(&mut app, Duration::from_millis(1500));
     assert_eq!(shown_position(&app), Some(paused_at));

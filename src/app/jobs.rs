@@ -38,6 +38,26 @@ pub fn import(env: LibraryEnv, events: EventSink, paths: Vec<PathBuf>, interacti
     });
 }
 
+/// Re-grabs low-resolution frame posters from older versions, refreshing the library as each
+/// one is done.
+pub fn upgrade_posters(env: LibraryEnv, events: EventSink) {
+    spawn("poster-upgrade", move || {
+        let db = match Db::open(&env.db_path) {
+            Ok(db) => db,
+            Err(e) => {
+                tracing::warn!("could not open the library to upgrade posters: {e:#}");
+                return;
+            }
+        };
+        let n = metadata::upgrade_frame_posters(&env, &db, &|| {
+            events.send(AppEvent::LibraryChanged);
+        });
+        if n > 0 {
+            tracing::info!("upgraded {n} frame posters to a higher resolution");
+        }
+    });
+}
+
 pub fn tmdb_search(
     key: String,
     events: EventSink,

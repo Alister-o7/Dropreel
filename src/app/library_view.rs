@@ -8,15 +8,18 @@ use egui_extras::{Column, TableBuilder};
 
 use super::icons;
 use super::state::{Layout, Library, Shelf, SortKey};
-use super::theme::{self, palette};
+use super::theme::{self, media, palette, radius};
 use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, EncodeBadge};
 use crate::library::{Movie, MovieId};
+use crate::metadata;
 use crate::util::format_bytes;
 
 const MIN_CARD_W: f32 = 158.0;
 const TEXT_H: f32 = 48.0;
 const GAP: f32 = 20.0;
+/// Poster corner radius in the grid.
+const RADIUS: u8 = radius::CARD;
 
 pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
     let p = palette(ui.ctx());
@@ -30,12 +33,18 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
         .exact_size(236.0)
         .frame(frame)
         .show(ui, |ui| {
+            sidebar_glow(ui);
             ui.horizontal(|ui| {
-                ui.add(egui::Image::new(theme::APP_ICON_URI).fit_to_exact_size(vec2(30.0, 30.0)));
+                logo(ui, 32.0);
                 ui.add_space(2.0);
-                ui.label(theme::bold("DropReel").size(19.0).color(p.text));
+                ui.label(
+                    theme::bold("DropReel")
+                        .size(20.0)
+                        .color(p.text)
+                        .extra_letter_spacing(-0.3),
+                );
             });
-            ui.add_space(14.0);
+            ui.add_space(18.0);
             let width = ui.available_width();
             if widgets::button_sized(
                 ui,
@@ -111,19 +120,27 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 .show(ui, |ui| {
                     for tag in &app.lib.tags {
                         let selected = app.filter.tag == Some(tag.id);
-                        if widgets::nav_item(
+                        let item = widgets::nav_item(
                             ui,
                             icons::TAG,
                             &tag.name,
                             Some(app.lib.tag_count(tag.id)),
                             selected,
                         )
-                        .clicked()
-                        {
+                        .on_hover_text("Right-click to rename or delete");
+                        if item.clicked() {
                             app.filter.tag = if selected { None } else { Some(tag.id) };
                             app.filter.shelf = Shelf::All;
                             app.filter_dirty = true;
                         }
+                        item.context_menu(|ui| {
+                            if menu_item(ui, icons::PENCIL, "Rename…") {
+                                app.actions.push(Action::AskRenameTag(tag.id));
+                            }
+                            if menu_item(ui, icons::TRASH, "Delete tag…") {
+                                app.actions.push(Action::AskDeleteTag(tag.id));
+                            }
+                        });
                     }
                 });
 
@@ -131,7 +148,8 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 let total = app.lib.movies.len();
                 ui.label(
                     RichText::new(format!(
-                        "{total} movies · {}",
+                        "{}  {total} movies · {}",
+                        icons::HARD_DRIVES,
                         format_bytes(app.lib.total_size())
                     ))
                     .size(12.0)
@@ -139,6 +157,47 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 );
             });
         });
+}
+
+/// The logo's white droplet on a frosted disc (a solid dark disc on the light theme).
+fn logo(ui: &mut egui::Ui, size: f32) {
+    let p = palette(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    let painter = ui.painter();
+    let r = size / 2.0;
+    if p.dark {
+        painter.circle_filled(rect.center(), r, media::GLASS_FAINT);
+        painter.circle_filled(rect.center(), r * 0.8, media::GLASS);
+    } else {
+        painter.circle_filled(rect.center(), r, p.text);
+    }
+    let h = size * 0.56;
+    let mark = Rect::from_center_size(rect.center(), vec2(h * 0.74, h));
+    egui::Image::new(theme::LOGO_MARK_URI)
+        .texture_options(theme::SMOOTH)
+        .paint_at(ui, mark);
+}
+
+/// A faint wash of the brand colours behind the logo at the top of the sidebar.
+fn sidebar_glow(ui: &egui::Ui) {
+    let p = palette(ui.ctx());
+    if !p.dark {
+        return;
+    }
+    let panel = ui.max_rect().expand2(vec2(14.0, 16.0));
+    let glow = Rect::from_min_size(panel.min, vec2(panel.width(), 190.0));
+    let painter = ui.painter();
+    egui::Image::new(theme::AURORA_URI)
+        .texture_options(theme::SMOOTH)
+        .uv(Rect::from_min_max(pos2(0.0, 0.18), pos2(0.4, 0.62)))
+        .tint(Color32::WHITE.gamma_multiply(0.22))
+        .paint_at(ui, glow);
+    widgets::vertical_gradient(
+        painter,
+        Rect::from_min_max(pos2(glow.left(), glow.top() + 40.0), glow.right_bottom()),
+        Color32::TRANSPARENT,
+        p.surface,
+    );
 }
 
 /// The encode queue status card at the bottom of the sidebar.
@@ -159,7 +218,7 @@ fn queue_card(app: &mut DropReelApp, ui: &mut egui::Ui) {
     };
     let resp = egui::Frame::new()
         .fill(p.raised)
-        .corner_radius(12)
+        .corner_radius(radius::CARD)
         .inner_margin(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -191,7 +250,7 @@ fn queue_card(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 egui::Label::new(RichText::new(&status.title).size(12.5).color(p.text_weak))
                     .truncate(),
             );
-            widgets::progress_bar(ui, status.fraction, p.accent, 6.0);
+            widgets::progress_bar(ui, status.fraction, 6.0);
             ui.label(
                 RichText::new(encode_progress_text(&status))
                     .size(12.0)
@@ -242,12 +301,13 @@ pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 Some(tag) => format!("{} {}", icons::TAG, tag.name),
                 None => app.filter.shelf.label().to_string(),
             };
-            ui.label(theme::bold(title).size(24.0).color(p.text));
             ui.label(
-                RichText::new(app.visible.len().to_string())
-                    .size(15.0)
-                    .color(p.text_weak),
+                theme::bold(title)
+                    .size(26.0)
+                    .color(p.text)
+                    .extra_letter_spacing(-0.4),
             );
+            widgets::chip(ui, None, &app.visible.len().to_string());
 
             ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
                 if widgets::icon_button(ui, icons::GEAR, "Settings").clicked() {
@@ -256,7 +316,7 @@ pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 ui.add_space(4.0);
                 egui::Frame::new()
                     .fill(p.raised)
-                    .corner_radius(10)
+                    .corner_radius(radius::CONTROL + 2)
                     .inner_margin(2)
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
@@ -307,8 +367,9 @@ pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                     app.filter_dirty = true;
                 }
                 ui.add_space(6.0);
-                // Leave room for the title on narrow windows.
-                let search_w = (ui.available_width() - 260.0).clamp(120.0, 250.0);
+                // Takes what the title leaves over, up to a comfortable width.
+                // (The frame's margins take another 28 points.)
+                let search_w = (ui.available_width() - 32.0).clamp(64.0, 250.0);
                 search_box(app, ui, search_w);
                 if app.imports_running > 0 {
                     ui.add_space(8.0);
@@ -339,10 +400,10 @@ fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
         Stroke::new(1.0, p.border)
     };
     egui::Frame::new()
-        .fill(p.input)
+        .fill(if focused { p.input } else { p.raised })
         .stroke(stroke)
-        .corner_radius(255)
-        .inner_margin(Margin::symmetric(12, 4))
+        .corner_radius(radius::CONTROL)
+        .inner_margin(Margin::symmetric(14, 5))
         .show(ui, |ui| {
             // The toolbar lays out right-to-left; the search box itself reads left-to-right.
             ui.allocate_ui_with_layout(
@@ -350,10 +411,13 @@ fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
                 UiLayout::left_to_right(Align::Center),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.label(
-                        RichText::new(icons::MAGNIFYING_GLASS)
-                            .size(16.0)
-                            .color(p.text_weak),
+                    let (glass, _) = ui.allocate_exact_size(vec2(16.0, 26.0), Sense::hover());
+                    widgets::icon_centered(
+                        ui.painter(),
+                        glass.center(),
+                        icons::MAGNIFYING_GLASS,
+                        theme::icon_font(16.0),
+                        p.text_weak,
                     );
                     let edit = ui.add(
                         egui::TextEdit::singleline(&mut app.filter.search)
@@ -361,26 +425,38 @@ fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
                             .frame(egui::Frame::NONE)
                             .hint_text(if width > 200.0 {
                                 "Search movies  (Ctrl+F)"
-                            } else {
+                            } else if width > 110.0 {
                                 "Search"
+                            } else {
+                                ""
                             })
                             .desired_width(width - 54.0),
                     );
+                    // The hint is hidden when the box is narrow, so name it explicitly.
+                    ui.ctx().accesskit_node_builder(edit.id, |node| {
+                        node.set_label("Search movies");
+                    });
                     if edit.changed() {
                         app.filter_dirty = true;
                     }
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
                         edit.request_focus();
                     }
-                    if app.filter.search.is_empty() {
-                        // Nothing to clear; keeps the field's layout steady.
-                        ui.label(RichText::new(" ").size(16.0));
+                    // The clear button's slot is always there, so the field's layout stays steady.
+                    let sense = if app.filter.search.is_empty() {
+                        Sense::hover()
                     } else {
-                        let clear = ui.add(
-                            egui::Label::new(
-                                RichText::new(icons::X_CIRCLE).size(16.0).color(p.text_weak),
-                            )
-                            .sense(Sense::click()),
+                        Sense::click()
+                    };
+                    let (slot, clear) = ui.allocate_exact_size(vec2(18.0, 26.0), sense);
+                    if !app.filter.search.is_empty() {
+                        let color = if clear.hovered() { p.text } else { p.text_weak };
+                        widgets::icon_centered(
+                            ui.painter(),
+                            slot.center(),
+                            icons::X_CIRCLE,
+                            theme::icon_font(16.0),
+                            color,
                         );
                         if widgets::named(clear, "Clear search")
                             .on_hover_text("Clear search")
@@ -417,34 +493,44 @@ pub fn central(app: &mut DropReelApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The empty-library illustration. Its edges fade to the dark theme's background; on the light
+/// theme it sits in a rounded card.
+fn hero_art(ui: &mut egui::Ui, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.743), Sense::hover());
+    egui::Image::new(theme::EMPTY_ART_URI)
+        .texture_options(theme::SMOOTH)
+        .corner_radius(radius::PANEL)
+        .paint_at(ui, rect);
+}
+
+/// A large gradient disc with an icon and a soft glow, for empty screens.
 fn hero_icon(ui: &mut egui::Ui, icon: &str, size: f32) {
     let p = palette(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size * 2.8), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size * 2.6), Sense::hover());
     let painter = ui.painter();
-    // A soft glow: fading rings around the accent disc.
-    for (scale, alpha) in [(1.4, 0.06), (1.25, 0.10), (1.12, 0.16)] {
-        painter.circle_filled(rect.center(), size * scale, p.accent.gamma_multiply(alpha));
-    }
-    painter.circle_filled(rect.center(), size, p.accent);
-    painter.text(
+    painter.circle_filled(rect.center(), size * 1.3, p.text.gamma_multiply(0.05));
+    painter.circle_filled(rect.center(), size, p.text.gamma_multiply(0.09));
+    widgets::icon_centered(
+        painter,
         rect.center(),
-        Align2::CENTER_CENTER,
         icon,
-        theme::icon_fill_font(size * 0.95),
-        Color32::WHITE,
+        theme::icon_font(size * 0.9),
+        p.text,
     );
 }
 
 fn empty_state(app: &mut DropReelApp, ui: &mut egui::Ui) {
     let p = palette(ui.ctx());
     ui.vertical_centered(|ui| {
-        ui.add_space((ui.available_height() / 2.0 - 190.0).max(30.0));
-        hero_icon(ui, icons::POPCORN, 58.0);
-        ui.add_space(18.0);
+        let art_w = (ui.available_height() * 0.62).clamp(220.0, 420.0);
+        ui.add_space((ui.available_height() / 2.0 - art_w * 0.375 - 150.0).max(10.0));
+        hero_art(ui, art_w);
+        ui.add_space(10.0);
         ui.label(
             theme::bold("Your library is empty")
-                .size(28.0)
-                .color(p.text),
+                .size(30.0)
+                .color(p.text)
+                .extra_letter_spacing(-0.5),
         );
         ui.add_space(4.0);
         ui.label(
@@ -453,7 +539,7 @@ fn empty_state(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 .color(p.text_weak),
         );
         ui.add_space(20.0);
-        let total_w = 320.0;
+        let total_w = 290.0;
         ui.allocate_ui_with_layout(
             vec2(total_w, 36.0),
             UiLayout::left_to_right(Align::Center),
@@ -490,13 +576,10 @@ fn empty_state(app: &mut DropReelApp, ui: &mut egui::Ui) {
 fn no_results(ui: &mut egui::Ui) {
     let p = palette(ui.ctx());
     ui.vertical_centered(|ui| {
-        ui.add_space((ui.available_height() / 2.0 - 80.0).max(30.0));
-        ui.label(
-            RichText::new(icons::MAGNIFYING_GLASS)
-                .size(44.0)
-                .color(p.text_weak),
-        );
-        ui.label(theme::semibold("No movies here").size(18.0).color(p.text));
+        ui.add_space((ui.available_height() / 2.0 - 120.0).max(30.0));
+        hero_icon(ui, icons::MAGNIFYING_GLASS, 34.0);
+        ui.add_space(6.0);
+        ui.label(theme::bold("No movies here").size(20.0).color(p.text));
         ui.label(RichText::new("Try another search, shelf or tag.").color(p.text_weak));
     });
 }
@@ -509,6 +592,7 @@ fn grid(app: &mut DropReelApp, ui: &mut egui::Ui) {
         settings,
         selected,
         encode_badges,
+        filter,
         ..
     } = app;
     let threshold = settings.threshold_bytes();
@@ -516,14 +600,40 @@ fn grid(app: &mut DropReelApp, ui: &mut egui::Ui) {
     let cols = ((avail + GAP) / (MIN_CARD_W + GAP)).floor().max(1.0) as usize;
     let card_w = ((avail - GAP * (cols as f32 - 1.0)) / cols as f32).min(230.0);
     let card_h = card_w * 1.5 + TEXT_H;
+    let row_h = card_h + GAP;
     let rows = visible.len().div_ceil(cols);
+    // The banner sits above the whole library only, not above a shelf, tag or search.
+    let unfiltered =
+        filter.shelf == Shelf::All && filter.tag.is_none() && filter.search.trim().is_empty();
+    let banner = featured(lib).filter(|_| unfiltered);
+    let banner_h = if banner.is_some() {
+        (avail * 0.36).clamp(220.0, 380.0) + GAP
+    } else {
+        0.0
+    };
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show_rows(ui, card_h + GAP, rows, |ui, range| {
-            ui.spacing_mut().item_spacing = vec2(GAP, 0.0);
-            for row in range {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
+        .show_viewport(ui, |ui, viewport| {
+            ui.set_height(banner_h + rows as f32 * row_h);
+            let origin = ui.max_rect().min;
+            if let Some((movie, resume)) = banner
+                && viewport.min.y < banner_h
+            {
+                let rect =
+                    Rect::from_min_size(origin + vec2(0.0, 6.0), vec2(avail, banner_h - GAP));
+                billboard(ui, rect, movie, resume, actions);
+            }
+            // Only the rows in view are laid out.
+            let first = ((viewport.min.y - banner_h) / row_h).floor().max(0.0) as usize;
+            let last = (((viewport.max.y - banner_h) / row_h).ceil().max(0.0) as usize).min(rows);
+            for row in first..last {
+                let top = origin.y + banner_h + row as f32 * row_h + 6.0;
+                let row_rect = Rect::from_min_size(pos2(origin.x, top), vec2(avail + 16.0, card_h));
+                let builder = egui::UiBuilder::new()
+                    .max_rect(row_rect)
+                    .layout(UiLayout::left_to_right(Align::Min));
+                ui.scope_builder(builder, |ui| {
+                    ui.spacing_mut().item_spacing = vec2(GAP, 0.0);
                     for &idx in visible.iter().skip(row * cols).take(cols) {
                         let movie = &lib.movies[idx];
                         card(
@@ -538,9 +648,135 @@ fn grid(app: &mut DropReelApp, ui: &mut egui::Ui) {
                         );
                     }
                 });
-                ui.add_space(GAP - 6.0);
             }
         });
+}
+
+/// The movie for the banner: the one most recently left part-way, or else the newest.
+/// Returns it with the position to resume from, if any.
+fn featured(lib: &Library) -> Option<(&Movie, Option<f64>)> {
+    let present = |m: &&Movie| !lib.missing.contains(&m.id);
+    lib.movies
+        .iter()
+        .filter(present)
+        .filter(|m| !m.watched && m.resume_pos.is_some_and(|p| p > 0.0))
+        .max_by_key(|m| m.last_played.unwrap_or(0))
+        .map(|m| (m, m.resume_pos))
+        .or_else(|| {
+            lib.movies
+                .iter()
+                .filter(present)
+                .max_by_key(|m| m.date_added)
+                .map(|m| (m, None))
+        })
+}
+
+/// A wide banner for one movie, like Netflix's billboard: its picture fading into the page, with
+/// the title and Play / More info.
+fn billboard(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    movie: &Movie,
+    resume: Option<f64>,
+    actions: &mut Vec<Action>,
+) {
+    let p = palette(ui.ctx());
+    widgets::paint_poster(ui, rect, movie.poster.as_deref(), "", false, radius::PANEL);
+    let painter = ui.painter();
+    // Darken the left side for the text, and melt the bottom into the page.
+    widgets::horizontal_gradient(
+        painter,
+        Rect::from_min_max(
+            rect.min,
+            pos2(rect.left() + rect.width() * 0.7, rect.bottom()),
+        ),
+        media::SCRIM_STRONG,
+        Color32::TRANSPARENT,
+    );
+    widgets::vertical_gradient(
+        painter,
+        Rect::from_min_max(
+            pos2(rect.left(), rect.top() + rect.height() * 0.55),
+            rect.right_bottom(),
+        ),
+        Color32::TRANSPARENT,
+        p.bg,
+    );
+
+    let left = rect.left() + 32.0;
+    let text_w = (rect.width() * 0.5).max(240.0);
+    let buttons_y = rect.bottom() - 52.0;
+    let mut meta = Vec::new();
+    if let Some(y) = movie.year {
+        meta.push(y.to_string());
+    }
+    if let Some(d) = movie.duration {
+        meta.push(widgets::short_duration(d));
+    }
+    if let Some(r) = widgets::resolution_label(movie.width, movie.height) {
+        meta.push(r.to_string());
+    }
+    let meta = painter.layout_no_wrap(
+        meta.join("  ·  "),
+        theme::font(14.0, "medium"),
+        media::TEXT_WEAK,
+    );
+    let meta_y = buttons_y - 14.0 - meta.size().y;
+    let title_size = (rect.height() * 0.12).clamp(26.0, 44.0);
+    let mut job = egui::text::LayoutJob::simple(
+        movie.title.clone(),
+        theme::font(title_size, "bold"),
+        media::TEXT,
+        text_w,
+    );
+    job.wrap.max_rows = 2;
+    let title = ui.fonts_mut(|f| f.layout_job(job));
+    let title_y = meta_y - 8.0 - title.size().y;
+    let kicker = if resume.is_some() {
+        "CONTINUE WATCHING"
+    } else {
+        "RECENTLY ADDED"
+    };
+    let kicker = painter.layout_no_wrap(kicker.into(), theme::font(12.0, "bold"), media::TEXT);
+    let kicker_y = title_y - 6.0 - kicker.size().y;
+    painter.rect_filled(
+        Rect::from_min_size(pos2(left, kicker_y + 1.0), vec2(3.0, kicker.size().y - 2.0)),
+        1,
+        p.primary,
+    );
+    painter.galley(pos2(left + 10.0, kicker_y), kicker, media::TEXT);
+    painter.galley(pos2(left, title_y), title, media::TEXT);
+    painter.galley(pos2(left, meta_y), meta, media::TEXT_WEAK);
+
+    let row = Rect::from_min_size(pos2(left, buttons_y), vec2(text_w, 36.0));
+    let builder = egui::UiBuilder::new()
+        .max_rect(row)
+        .layout(UiLayout::left_to_right(Align::Center));
+    ui.scope_builder(builder, |ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        let label = match resume {
+            Some(pos) => format!("Resume {}", crate::util::format_duration(pos)),
+            None => "Play".to_string(),
+        };
+        let play = widgets::button_sized(
+            ui,
+            ButtonKind::Primary,
+            Some(icons::PLAY),
+            &label,
+            110.0,
+            true,
+        );
+        if widgets::named(play, &format!("{label}: {}", movie.title)).clicked() {
+            actions.push(match resume {
+                Some(pos) => Action::StartPlayback(movie.id, Some(pos)),
+                None => Action::Play(movie.id),
+            });
+        }
+        let info = widgets::button(ui, ButtonKind::Secondary, Some(icons::INFO), "More info");
+        if widgets::named(info, &format!("More info: {}", movie.title)).clicked() {
+            actions.push(Action::ShowDetails(movie.id));
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -575,87 +811,99 @@ fn card(
     let t = ui
         .ctx()
         .animate_bool_with_time(resp.id.with("hover"), hovered, 0.16);
-    let poster = poster_base.translate(vec2(0.0, -4.0 * t));
+    // Like Netflix, a hovered poster grows a little rather than lifting.
+    let poster = poster_base.expand2(poster_base.size() * 0.03 * t);
     let painter = ui.painter();
 
     if t > 0.0 {
         let shadow = egui::Shadow {
-            offset: [0, 12],
-            blur: 28,
+            offset: [0, 14],
+            blur: 32,
             spread: 0,
-            color: Color32::from_black_alpha((110.0 * t) as u8),
+            color: media::SCRIM.gamma_multiply(t),
         };
-        painter.add(shadow.as_shape(poster, 12));
+        painter.add(shadow.as_shape(poster, RADIUS));
     }
-    widgets::paint_poster(
+    let poster_shown = widgets::paint_poster(
         ui,
         poster,
         movie.poster.as_deref(),
         &movie.title,
         missing,
-        12,
+        RADIUS,
     );
+    // A frame from the movie has no title of its own: put one on it, like box art.
+    let title_on_art = poster_shown > 0.0
+        && movie
+            .poster
+            .as_deref()
+            .is_some_and(metadata::is_frame_poster);
     let painter = ui.painter();
 
     if t > 0.01 && encode.is_none() {
+        let r = f32::from(RADIUS);
         let lower = Rect::from_min_max(
-            pos2(poster.left(), poster.center().y),
-            pos2(poster.right(), poster.bottom() - 12.0),
+            pos2(poster.left(), poster.top() + poster.height() * 0.4),
+            pos2(poster.right(), poster.bottom() - r),
         );
         widgets::vertical_gradient(
             painter,
             lower,
             Color32::TRANSPARENT,
-            Color32::from_black_alpha((170.0 * t) as u8),
+            media::SCRIM_STRONG.gamma_multiply(t),
         );
         painter.rect_filled(
             Rect::from_min_max(
-                pos2(poster.left(), poster.bottom() - 12.0),
+                pos2(poster.left(), poster.bottom() - r),
                 poster.right_bottom(),
             ),
             egui::CornerRadius {
                 nw: 0,
                 ne: 0,
-                sw: 12,
-                se: 12,
+                sw: RADIUS,
+                se: RADIUS,
             },
-            Color32::from_black_alpha((170.0 * t) as u8),
+            media::SCRIM_STRONG.gamma_multiply(t),
         );
         if !missing {
-            let r = 22.0 + 4.0 * t;
-            painter.circle_filled(poster.center(), r, p.accent.gamma_multiply(t));
-            painter.text(
-                poster.center() + vec2(2.0, 0.0),
-                Align2::CENTER_CENTER,
-                icons::PLAY,
-                theme::icon_fill_font(r),
-                Color32::WHITE.gamma_multiply(t),
-            );
+            widgets::play_disc(painter, poster.center(), 22.0 + 2.0 * t, t);
         }
-        let info_center = info_rect.center() + vec2(0.0, -4.0 * t);
-        painter.circle_filled(
+        let info_center = poster.right_top() + vec2(-20.0, 20.0);
+        painter.circle_filled(info_center, 15.0, media::BUTTON.gamma_multiply(t));
+        painter.circle_stroke(
             info_center,
             15.0,
-            Color32::from_black_alpha((170.0 * t) as u8),
+            Stroke::new(1.5, media::BUTTON_RIM.gamma_multiply(t)),
         );
-        painter.text(
+        widgets::icon_centered(
+            painter,
             info_center,
-            Align2::CENTER_CENTER,
             icons::INFO,
             theme::icon_font(18.0),
-            Color32::WHITE.gamma_multiply(t),
+            media::TEXT.gamma_multiply(t),
         );
     }
+    // After the hover shading, so the title stays bright.
+    if title_on_art {
+        title_on_poster(
+            ui,
+            poster,
+            &movie.title,
+            poster_shown,
+            movie.resume_pos.is_some(),
+        );
+    }
+    let painter = ui.painter();
     if selected == Some(id) || t > 0.01 {
         let color = if selected == Some(id) {
             p.accent
         } else {
-            p.accent.gamma_multiply(t)
+            media::HAIRLINE.gamma_multiply(t)
         };
         painter.rect_stroke(
             poster,
-            12,
-            Stroke::new(2.0, color),
+            RADIUS,
+            Stroke::new(if selected == Some(id) { 2.0 } else { 1.0 }, color),
             egui::StrokeKind::Outside,
         );
     }
@@ -669,8 +917,8 @@ fn card(
             Align2::LEFT_TOP,
             Some(icons::WARNING),
             "Missing",
-            p.danger,
-            Color32::WHITE,
+            media::DANGER,
+            media::TEXT,
         );
         y = r.bottom() + 4.0;
     }
@@ -681,8 +929,8 @@ fn card(
             Align2::LEFT_TOP,
             Some(icons::LIGHTNING),
             &format_bytes(movie.size),
-            p.warn,
-            Color32::from_rgb(35, 22, 0),
+            media::PILL,
+            media::ON_PILL,
         );
     }
     if movie.watched {
@@ -692,8 +940,8 @@ fn card(
             Align2::RIGHT_BOTTOM,
             Some(icons::CHECK),
             "",
-            p.success,
-            Color32::WHITE,
+            media::PILL,
+            media::ON_PILL,
         );
     }
     if let (Some(pos), Some(dur)) = (movie.resume_pos, movie.duration)
@@ -705,15 +953,15 @@ fn card(
             poster.left_bottom() + vec2(10.0, -10.0),
             poster.right_bottom() + vec2(-10.0, -6.0),
         );
-        painter.rect_filled(bar, 2, Color32::from_white_alpha(70));
+        painter.rect_filled(bar, 1, media::TRACK);
         let mut done = bar;
         done.set_width(bar.width() * (pos / dur).clamp(0.0, 1.0) as f32);
-        painter.rect_filled(done, 2, p.accent2);
+        painter.rect_filled(done, 1, media::PROGRESS);
     }
 
     // Encode overlay
     if let Some(badge) = encode {
-        painter.rect_filled(poster, 12, Color32::from_black_alpha(175));
+        painter.rect_filled(poster, RADIUS, media::SCRIM_STRONG);
         let (fraction, label) = match badge {
             EncodeBadge::Running(s) => (s.fraction, format!("{:.0}%", s.fraction * 100.0)),
             EncodeBadge::Queued(n) => (0.0, format!("#{}", n + 1)),
@@ -724,17 +972,12 @@ fn card(
             center,
             30.0,
             fraction,
-            p.accent,
-            Color32::from_white_alpha(40),
+            media::PROGRESS,
+            media::TRACK,
             5.0,
         );
-        painter.text(
-            center,
-            Align2::CENTER_CENTER,
-            label,
-            theme::font(16.0, "bold"),
-            Color32::WHITE,
-        );
+        let label = painter.layout_no_wrap(label, theme::font(16.0, "bold"), media::TEXT);
+        widgets::galley_centered(painter, center, label, media::TEXT);
         let caption = if matches!(badge, EncodeBadge::Running(_)) {
             "Re-encoding"
         } else {
@@ -745,21 +988,24 @@ fn card(
             Align2::CENTER_CENTER,
             caption,
             theme::font(12.5, "semibold"),
-            Color32::from_white_alpha(220),
+            media::TEXT_WEAK,
         );
     }
 
-    // Caption
+    // Caption: the title (unless it is already on the art), then year and length.
     let text_top = poster_base.left_bottom() + vec2(2.0, 10.0);
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        movie.title.clone(),
-        theme::font(14.0, "semibold"),
-        p.text,
-    );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(width - 4.0);
-    let galley = ui.fonts_mut(|f| f.layout_job(job));
-    let title_h = galley.size().y;
-    ui.painter().galley(text_top, galley, p.text);
+    let mut title_h = -3.0;
+    if !title_on_art {
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            movie.title.clone(),
+            theme::font(14.0, "semibold"),
+            p.text,
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width - 4.0);
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        title_h = galley.size().y;
+        ui.painter().galley(text_top, galley, p.text);
+    }
     let mut sub = Vec::new();
     if let Some(y) = movie.year {
         sub.push(y.to_string());
@@ -791,6 +1037,49 @@ fn card(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp.context_menu(|ui| movie_menu(ui, movie, missing, movie.size > threshold, actions));
+}
+
+/// The title across the bottom of a poster, over a dark fade; `opacity` follows the poster's own
+/// fade-in. Leaves room for the resume bar when there is one.
+fn title_on_poster(ui: &egui::Ui, poster: Rect, title: &str, opacity: f32, resume_bar: bool) {
+    let painter = ui.painter();
+    let fade = Rect::from_min_max(
+        pos2(poster.left(), poster.top() + poster.height() * 0.55),
+        poster.right_bottom() - vec2(0.0, f32::from(RADIUS)),
+    );
+    widgets::vertical_gradient(
+        painter,
+        fade,
+        Color32::TRANSPARENT,
+        media::SCRIM_STRONG.gamma_multiply(opacity),
+    );
+    painter.rect_filled(
+        Rect::from_min_max(
+            pos2(poster.left(), poster.bottom() - f32::from(RADIUS)),
+            poster.right_bottom(),
+        ),
+        egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: RADIUS,
+            se: RADIUS,
+        },
+        media::SCRIM_STRONG.gamma_multiply(opacity),
+    );
+    let mut job = egui::text::LayoutJob::simple(
+        title.to_string(),
+        theme::font(16.0, "bold"),
+        media::TEXT,
+        poster.width() - 24.0,
+    );
+    job.wrap.max_rows = 2;
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let bottom = poster.bottom() - if resume_bar { 18.0 } else { 12.0 };
+    painter.galley_with_override_text_color(
+        pos2(poster.left() + 12.0, bottom - galley.size().y),
+        galley,
+        media::TEXT.gamma_multiply(opacity),
+    );
 }
 
 fn menu_item(ui: &mut egui::Ui, icon: &str, label: &str) -> bool {
@@ -1044,42 +1333,60 @@ pub fn drop_overlay(ctx: &egui::Context) {
     if ctx.input(|i| i.raw.hovered_files.is_empty()) {
         return;
     }
-    let p = palette(ctx);
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         Id::unique("drop_overlay"),
     ));
     let rect = ctx.content_rect();
-    painter.rect_filled(rect, 0.0, Color32::from_black_alpha(200));
+    // Aurora backdrop, cropped to cover the window, darkened for contrast.
+    let aurora = ctx.try_load_texture(theme::AURORA_URI, theme::SMOOTH, egui::SizeHint::default());
+    painter.rect_filled(rect, 0.0, theme::ramp::N950);
+    if let Ok(egui::load::TexturePoll::Ready { texture }) = aurora {
+        painter.image(
+            texture.id,
+            rect,
+            widgets::cover_uv(texture.size, rect.size()),
+            Color32::WHITE.gamma_multiply(0.85),
+        );
+    }
+    painter.rect_filled(rect, 0.0, media::SCRIM_SOFT);
     let inner = rect.shrink(28.0);
-    painter.rect_filled(inner, 24, p.accent.gamma_multiply(0.12));
     painter.rect_stroke(
         inner,
-        24,
-        Stroke::new(3.0, p.accent),
+        radius::PANEL,
+        Stroke::new(2.0, media::EDGE),
         egui::StrokeKind::Inside,
     );
     let c = rect.center();
-    painter.circle_filled(c - vec2(0.0, 60.0), 52.0, p.accent);
+    let disc = c - vec2(0.0, 70.0);
+    painter.circle_filled(disc, 74.0, media::GLASS_FAINT);
+    painter.circle_filled(disc, 60.0, media::GLASS);
+    if let Ok(egui::load::TexturePoll::Ready { texture }) = ctx.try_load_texture(
+        theme::LOGO_MARK_URI,
+        theme::SMOOTH,
+        egui::SizeHint::default(),
+    ) {
+        let h = 70.0;
+        let size = vec2(h * texture.size.x / texture.size.y.max(1.0), h);
+        painter.image(
+            texture.id,
+            Rect::from_center_size(disc, size),
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
     painter.text(
-        c - vec2(0.0, 60.0),
-        Align2::CENTER_CENTER,
-        icons::FILM_REEL,
-        theme::icon_fill_font(52.0),
-        Color32::WHITE,
-    );
-    painter.text(
-        c + vec2(0.0, 22.0),
+        c + vec2(0.0, 36.0),
         Align2::CENTER_CENTER,
         "Drop to add to your library",
-        theme::font(30.0, "bold"),
-        Color32::WHITE,
+        theme::font(32.0, "bold"),
+        media::TEXT,
     );
     painter.text(
-        c + vec2(0.0, 58.0),
+        c + vec2(0.0, 74.0),
         Align2::CENTER_CENTER,
         "Files and whole folders are both fine",
         theme::font(15.0, "regular"),
-        Color32::from_white_alpha(180),
+        media::TEXT_WEAK,
     );
 }

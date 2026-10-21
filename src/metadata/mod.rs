@@ -18,6 +18,13 @@ fn new_poster_path(posters: &Path, id: MovieId, kind: &str) -> PathBuf {
     posters.join(format!("{id}-{kind}-{stamp}.jpg"))
 }
 
+/// Whether a poster is a frame grabbed from the movie (rather than artwork from TMDb).
+pub fn is_frame_poster(poster: &Path) -> bool {
+    poster
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().contains("-frame-"))
+}
+
 /// Deletes a poster we created ourselves (never anything outside the cache folder).
 pub fn delete_cached_poster(posters: &Path, poster: Option<&Path>) {
     if let Some(p) = poster
@@ -73,6 +80,55 @@ pub fn generate_thumbnail(
     let out = new_poster_path(&env.posters_dir, id, "frame");
     thumbnail::grab_frame(ffmpeg, file, duration, hdr, &out)?;
     replace_poster(env, db, id, &out).map_err(|e| e.to_string())
+}
+
+/// Re-grabs frame posters made smaller than [`thumbnail::FRAME_WIDTH`] (older versions grabbed
+/// 480-pixel frames), when the movie itself is wider. Calls `on_upgrade` after each one and
+/// returns how many were upgraded.
+pub fn upgrade_frame_posters(env: &LibraryEnv, db: &Db, on_upgrade: &dyn Fn()) -> usize {
+    if env.tools.ffmpeg.is_none() {
+        return 0;
+    }
+    let movies = match db.all_movies() {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("could not list movies to upgrade posters: {e:#}");
+            return 0;
+        }
+    };
+    let mut upgraded = 0;
+    for movie in movies {
+        let Some(poster) = movie.poster.as_deref() else {
+            continue;
+        };
+        if !is_frame_poster(poster) || !poster.starts_with(&env.posters_dir) || !movie.path.exists()
+        {
+            continue;
+        }
+        let Ok((width, _)) = image::image_dimensions(poster) else {
+            continue;
+        };
+        let video_width = movie.width.unwrap_or(0);
+        if width >= thumbnail::FRAME_WIDTH || video_width <= width {
+            continue;
+        }
+        // HDR isn't stored, so ask the file again: an HDR frame needs tone-mapping.
+        let hdr = env
+            .tools
+            .ffprobe
+            .as_deref()
+            .and_then(|ffprobe| probe::probe(ffprobe, &movie.path).ok())
+            .and_then(|media| media.video)
+            .is_some_and(|v| v.is_hdr());
+        match generate_thumbnail(env, db, movie.id, &movie.path, movie.duration, hdr) {
+            Ok(()) => {
+                upgraded += 1;
+                on_upgrade();
+            }
+            Err(e) => tracing::warn!("could not upgrade the poster of \"{}\": {e}", movie.title),
+        }
+    }
+    upgraded
 }
 
 /// Metadata for a newly imported movie: TMDb if a key is set, otherwise (or when TMDb has no

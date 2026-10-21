@@ -56,6 +56,11 @@ pub enum Action {
     Remove(MovieId),
     SetTag(MovieId, TagId, bool),
     CreateTag(MovieId, String),
+    /// Asks for a new name for a tag.
+    AskRenameTag(TagId),
+    RenameTag(TagId, String),
+    /// Asks before deleting a tag.
+    AskDeleteTag(TagId),
     DeleteTag(TagId),
     SetWatched(MovieId, bool),
     EditTitle(MovieId),
@@ -113,6 +118,11 @@ pub struct DropReelApp {
     visible: Vec<usize>,
     filter_dirty: bool,
     selected: Option<MovieId>,
+    /// The movie in the details panel; kept while the panel slides closed.
+    detail_shown: Option<MovieId>,
+    /// When the switch between the library and the player started: the new screen fades in
+    /// from black.
+    screen_fade: Option<Instant>,
 
     imports_running: usize,
     import_progress: Option<ImportProgress>,
@@ -228,6 +238,8 @@ impl DropReelApp {
             visible: Vec::new(),
             filter_dirty: true,
             selected: None,
+            detail_shown: None,
+            screen_fade: None,
             imports_running: 0,
             import_progress: None,
             reports: VecDeque::new(),
@@ -263,6 +275,7 @@ impl DropReelApp {
         }
         app.warn_about_missing_tools();
         app.restart_watcher();
+        jobs::upgrade_posters(app.env(), app.events.clone());
         // Pick up files added to watched folders while DropReel was closed, and find moved files.
         if !app.settings.watched_folders.is_empty() {
             app.start_import(app.settings.watched_folders.clone(), false);
@@ -558,8 +571,28 @@ impl DropReelApp {
                     .and_then(|tag| self.db.set_movie_tag(movie, tag, true));
                 self.db_result(r);
             }
+            Action::AskRenameTag(tag) => {
+                if let Some(t) = self.lib.tags.iter().find(|t| t.id == tag) {
+                    self.dialogs.open_rename_tag(t);
+                }
+            }
+            Action::RenameTag(tag, name) => {
+                let r = self.db.rename_tag(tag, &name).map(|kept| {
+                    // If it merged into another tag, the shelf follows it.
+                    if self.filter.tag == Some(tag) {
+                        self.filter.tag = Some(kept);
+                        self.filter_dirty = true;
+                    }
+                });
+                self.db_result(r);
+            }
+            Action::AskDeleteTag(tag) => self.dialogs.confirm_delete_tag = Some(tag),
             Action::DeleteTag(tag) => {
                 let r = self.db.delete_tag(tag);
+                if r.is_ok() && self.filter.tag == Some(tag) {
+                    self.filter.tag = None;
+                    self.filter_dirty = true;
+                }
                 self.db_result(r);
             }
             Action::SetWatched(id, on) => {
@@ -700,6 +733,7 @@ impl DropReelApp {
                     movie.title.clone(),
                     movie.duration,
                 ));
+                self.screen_fade = Some(Instant::now());
                 let r = self.db.mark_played(id);
                 self.db_result(r);
             }
@@ -755,6 +789,7 @@ impl DropReelApp {
                 .add(ToastKind::Success, format!("Finished \"{}\".", np.title));
         }
         self.now_playing = None;
+        self.screen_fade = Some(Instant::now());
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
     }
 
@@ -945,6 +980,31 @@ impl DropReelApp {
         self.encode_queued = queued;
     }
 
+    /// Fades the screen in from black after switching between the library and the player.
+    fn paint_screen_fade(&mut self, ctx: &egui::Context) {
+        const FADE: f32 = 0.35;
+        let Some(start) = self.screen_fade else {
+            return;
+        };
+        let t = start.elapsed().as_secs_f32() / FADE;
+        if t >= 1.0 {
+            self.screen_fade = None;
+            return;
+        }
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("screen_fade"),
+        ));
+        // Ease out: quick at first, settling gently.
+        let alpha = (1.0 - t).powi(2);
+        painter.rect_filled(
+            ctx.content_rect(),
+            0.0,
+            theme::ramp::N950.gamma_multiply(alpha),
+        );
+        ctx.request_repaint();
+    }
+
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
@@ -984,8 +1044,9 @@ impl eframe::App for DropReelApp {
         } else {
             library_view::sidebar(self, ui);
             if self.selected.is_some() {
-                detail::panel(self, ui);
+                self.detail_shown = self.selected;
             }
+            detail::panel(self, ui);
             library_view::toolbar(self, ui);
             library_view::central(self, ui);
         }
@@ -997,6 +1058,7 @@ impl eframe::App for DropReelApp {
         };
         self.toasts.show(&ctx, toast_bottom);
         library_view::drop_overlay(&ctx);
+        self.paint_screen_fade(&ctx);
 
         for action in std::mem::take(&mut self.actions) {
             self.apply(action, &ctx);

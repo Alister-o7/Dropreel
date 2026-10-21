@@ -41,6 +41,9 @@ pub enum ThemeChoice {
     Light,
 }
 
+/// How long the player's controls may wait before fading out, in seconds.
+pub const HIDE_CONTROLS_RANGE: std::ops::RangeInclusive<f64> = 1.0..=30.0;
+
 pub const X265_PRESETS: [&str; 7] = [
     "ultrafast",
     "veryfast",
@@ -69,6 +72,8 @@ pub struct Settings {
     pub high_quality_video: bool,
     /// Sync video to the display refresh and blend frames (mpv's display-resample + interpolation).
     pub smooth_motion: bool,
+    /// Seconds without mouse movement before the player's controls fade out.
+    pub hide_controls_after: f64,
 }
 
 impl Default for Settings {
@@ -83,7 +88,9 @@ impl Default for Settings {
             threshold_gb: 5.0,
             theme: ThemeChoice::Dark,
             high_quality_video: true,
-            smooth_motion: true,
+            // Off by default: on some displays and drivers it makes playback worse, not better.
+            smooth_motion: false,
+            hide_controls_after: 2.5,
         }
     }
 }
@@ -125,6 +132,12 @@ impl Settings {
             self.x265_preset = "medium".into();
         }
         self.tmdb_api_key = self.tmdb_api_key.trim().to_string();
+        self.hide_controls_after = if self.hide_controls_after.is_finite() {
+            self.hide_controls_after
+                .clamp(*HIDE_CONTROLS_RANGE.start(), *HIDE_CONTROLS_RANGE.end())
+        } else {
+            Self::default().hide_controls_after
+        };
         self
     }
 
@@ -172,6 +185,26 @@ mod tests {
         let (loaded, warning) = Settings::load(&path);
         assert_eq!(loaded, Settings::default());
         assert!(warning.is_some());
+    }
+
+    #[test]
+    fn fresh_settings_and_the_hide_delay() {
+        let fresh = Settings::default();
+        assert!(fresh.high_quality_video);
+        assert!(!fresh.smooth_motion);
+        assert_eq!(fresh.hide_controls_after, 2.5);
+
+        // Files from before the option existed get the default; odd values are clamped.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, "smooth_motion = true").unwrap();
+        let (old, _) = Settings::load(&path);
+        assert!(old.smooth_motion, "existing choices are kept");
+        assert_eq!(old.hide_controls_after, 2.5);
+        for (written, expected) in [("0.2", 1.0), ("120.0", 30.0), ("7.5", 7.5)] {
+            std::fs::write(&path, format!("hide_controls_after = {written}")).unwrap();
+            assert_eq!(Settings::load(&path).0.hide_controls_after, expected);
+        }
     }
 
     #[test]

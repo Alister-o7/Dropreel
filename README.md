@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon-512.png" width="112" alt="DropReel logo"></p>
+
 # DropReel
 
 [![Windows](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml/badge.svg)](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml)
@@ -13,24 +15,30 @@ window and they join your library; click a poster and it plays right there. Movi
 - **Drag & drop library** — drop files or whole folders (`mkv mp4 m4v avi mov wmv webm ts m2ts`).
   Duplicates are skipped, and a movie that was moved or renamed is found again by its
   fingerprint. Watched folders import new movies automatically.
-- **Built-in player** (libmpv) — seek bar, audio and subtitle tracks, volume, fullscreen,
-  keyboard shortcuts, and **resume** where you left off. Movies are marked watched at 95%.
+- **Built-in player** (libmpv) — the video fills the window and the controls float over it,
+  fading once the mouse rests (after 2.5 s by default, adjustable, paused or not). Seek bar,
+  audio and subtitle tracks, volume, fullscreen, keyboard shortcuts, and **resume** where you
+  left off. Movies are marked watched at 95%.
 - **Re-encode to HEVC** — for files over the limit (5 GB by default): a preview with the
   expected size, then a background encode with progress, ETA and cancel. Uses your GPU (NVENC →
   AMF → Quick Sync) when available, otherwise x265. Audio and subtitles are copied untouched,
   HDR10 metadata is kept, and the result is verified before the original is touched. Afterwards
   you choose: keep the original, move it to the Recycle Bin, or delete it.
-- **Organise** — poster grid or list, search, sort, shelves (Continue watching, Unwatched,
-  Large files…) and your own tags.
-- **Posters & metadata** — a frame from the movie by default; optionally from
-  [TMDb](https://www.themoviedb.org) with an API key. Works fully offline.
-- Dark and light themes.
+- **Organise** — poster grid or list with a featured banner for the movie you were last
+  watching (or the newest one), search, sort, shelves (Continue watching, Unwatched, Large
+  files…) and your own tags, which you can rename, merge and delete.
+- **Posters & metadata** — a frame from the movie by default (up to 1280 px wide, with the title
+  across the bottom like box art); optionally from [TMDb](https://www.themoviedb.org) with an
+  API key. Works fully offline.
+- **A dark, Netflix-style look** with one brick-red accent, plus a light theme.
 
 | Movie details | Re-encode preview |
 |---|---|
 | ![Details](docs/screenshots/details.jpg) | ![Preview](docs/screenshots/reencode-preview.jpg) |
 | **Re-encode finished** | **Player** |
 | ![Finished](docs/screenshots/reencode-finished.jpg) | ![Player](docs/screenshots/player.jpg) |
+| **Light theme** | **Drop to add** |
+| ![Light theme](docs/screenshots/light-theme.jpg) | ![Drop overlay](docs/screenshots/drop.jpg) |
 
 ## Install
 
@@ -63,6 +71,7 @@ You can also point DropReel at your own `ffmpeg`/`ffprobe` in **Settings**, or h
 | Add movies | Drag files/folders onto the window, or **Add movies** / **Add folder** |
 | Play | Click a poster (or double-click a row in list view) |
 | Details, tags, re-encode | Hover a poster → ⓘ, or right-click it |
+| Rename or delete a tag | Right-click it in the sidebar, or *Settings → Tags* |
 | Play/pause · seek ±10 s · volume · mute | `Space` · `←` `→` · `↑` `↓` · `M` |
 | Fullscreen | `F` or double-click the video; `Esc` leaves fullscreen, then returns to the library |
 | Search | `Ctrl+F` |
@@ -77,8 +86,8 @@ and `logs`.
 
 - **Black picture but sound plays** — turn off *Settings → Player → High-quality video
   scaling*. On software OpenGL (VMs, remote desktop) simple scaling is used automatically.
-- **Choppy or juddery playback** — *Settings → Player → Smooth motion* (on by default) syncs
-  video to your monitor's refresh rate and blends frames. Each playback writes a
+- **Choppy or juddery playback** — try *Settings → Player → Smooth motion* (off by default): it
+  syncs video to your monitor's refresh rate and blends frames. Each playback writes a
   `playback stats:` line to the log (decoder, dropped/late frames, render times) — attach it to a
   bug report.
 - **mpv diagnostics** — set `DROPREEL_MPV_LOG=C:\path\mpv.log` before starting DropReel to get
@@ -115,8 +124,8 @@ with ffmpeg once, and cache them under `target/`.
 | Suite | What it covers |
 |---|---|
 | `tests/library.rs` | Importing every supported container from nested folders, junk and partial files, duplicates, concurrent imports, moved/missing/removed files, Locate…, folder watching, search/sort/shelves/tags |
-| `tests/player.rs` | Real libmpv, headless: loading, resume, pause, seeking, end of file, audio/subtitle tracks, volume, unplayable files, smooth motion |
-| `tests/ui.rs` | The whole app driven through its accessibility tree with egui_kittest: drag & drop, search, details, removal, settings, playback controls, resume prompt, keyboard shortcuts, track menus, "Open with" |
+| `tests/player.rs` | Real libmpv, headless: loading, resume, pause, seeking (including before a file has finished opening), end of file, truncated files, audio/subtitle tracks, volume, unplayable files, smooth motion |
+| `tests/ui.rs` | The whole app driven through its accessibility tree with egui_kittest: drag & drop, search, details, removal, settings, renaming and deleting tags, small windows, playback controls, resume prompt, keyboard shortcuts, track menus, "Open with" |
 | `tests/ffmpeg_pipeline.rs`, `tests/encode_queue.rs` | Probing, thumbnails, real HEVC encodes and verification |
 
 Suites skip themselves when ffmpeg or libmpv can't be found. Point `DROPREEL_LIBMPV` at
