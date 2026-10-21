@@ -300,10 +300,12 @@ pub enum ButtonKind {
 
 fn kind_colors(p: &Palette, kind: ButtonKind) -> (Color32, Color32) {
     match kind {
-        ButtonKind::Primary => (p.text, p.bg),
+        // The deep red keeps white text readable on both themes.
+        ButtonKind::Primary => (theme::ramp::RED_DEEP, theme::ramp::WHITE),
         ButtonKind::Secondary => (p.raised, p.text),
         ButtonKind::Warn => (p.warn, p.bg),
-        ButtonKind::Danger => (p.danger, theme::ramp::WHITE),
+        // Outlined, so a destructive button never looks like the primary one.
+        ButtonKind::Danger => (Color32::TRANSPARENT, p.danger),
         ButtonKind::Ghost => (Color32::TRANSPARENT, p.text_weak),
     }
 }
@@ -344,8 +346,9 @@ pub fn button_sized(
     let bg = match kind {
         ButtonKind::Ghost => Color32::TRANSPARENT.lerp_to_gamma(p.hover, t),
         ButtonKind::Secondary => fill.lerp_to_gamma(p.hover, t),
-        ButtonKind::Primary => fill.lerp_to_gamma(p.text_weak, 0.3 * t),
-        _ => fill.lerp_to_gamma(theme::ramp::WHITE, 0.14 * t),
+        ButtonKind::Primary => fill.lerp_to_gamma(theme::ramp::RED, t),
+        ButtonKind::Danger => Color32::TRANSPARENT.lerp_to_gamma(p.danger.gamma_multiply(0.14), t),
+        ButtonKind::Warn => fill.lerp_to_gamma(theme::ramp::WHITE, 0.14 * t),
     };
     let (bg, fg_alpha) = if enabled {
         (bg, 1.0)
@@ -358,13 +361,14 @@ pub fn button_sized(
     } else {
         ui.painter().rect_filled(rect, radius, bg);
     }
-    if kind == ButtonKind::Secondary {
-        ui.painter().rect_stroke(
-            rect,
-            radius,
-            Stroke::new(1.0, p.border.gamma_multiply(1.0 - t)),
-            egui::StrokeKind::Inside,
-        );
+    let outline = match kind {
+        ButtonKind::Secondary => Some(Stroke::new(1.0, p.border.gamma_multiply(1.0 - t))),
+        ButtonKind::Danger => Some(Stroke::new(1.5, p.danger.gamma_multiply(fg_alpha))),
+        _ => None,
+    };
+    if let Some(stroke) = outline {
+        ui.painter()
+            .rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
     }
     let pos = rect.center() - galley.size() / 2.0;
     ui.painter()
