@@ -113,6 +113,11 @@ pub struct DropReelApp {
     visible: Vec<usize>,
     filter_dirty: bool,
     selected: Option<MovieId>,
+    /// The movie in the details panel; kept while the panel slides closed.
+    detail_shown: Option<MovieId>,
+    /// When the switch between the library and the player started: the new screen fades in
+    /// from black.
+    screen_fade: Option<Instant>,
 
     imports_running: usize,
     import_progress: Option<ImportProgress>,
@@ -228,6 +233,8 @@ impl DropReelApp {
             visible: Vec::new(),
             filter_dirty: true,
             selected: None,
+            detail_shown: None,
+            screen_fade: None,
             imports_running: 0,
             import_progress: None,
             reports: VecDeque::new(),
@@ -700,6 +707,7 @@ impl DropReelApp {
                     movie.title.clone(),
                     movie.duration,
                 ));
+                self.screen_fade = Some(Instant::now());
                 let r = self.db.mark_played(id);
                 self.db_result(r);
             }
@@ -755,6 +763,7 @@ impl DropReelApp {
                 .add(ToastKind::Success, format!("Finished \"{}\".", np.title));
         }
         self.now_playing = None;
+        self.screen_fade = Some(Instant::now());
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
     }
 
@@ -945,6 +954,31 @@ impl DropReelApp {
         self.encode_queued = queued;
     }
 
+    /// Fades the screen in from black after switching between the library and the player.
+    fn paint_screen_fade(&mut self, ctx: &egui::Context) {
+        const FADE: f32 = 0.35;
+        let Some(start) = self.screen_fade else {
+            return;
+        };
+        let t = start.elapsed().as_secs_f32() / FADE;
+        if t >= 1.0 {
+            self.screen_fade = None;
+            return;
+        }
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("screen_fade"),
+        ));
+        // Ease out: quick at first, settling gently.
+        let alpha = (1.0 - t).powi(2);
+        painter.rect_filled(
+            ctx.content_rect(),
+            0.0,
+            theme::ramp::N950.gamma_multiply(alpha),
+        );
+        ctx.request_repaint();
+    }
+
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
@@ -984,8 +1018,9 @@ impl eframe::App for DropReelApp {
         } else {
             library_view::sidebar(self, ui);
             if self.selected.is_some() {
-                detail::panel(self, ui);
+                self.detail_shown = self.selected;
             }
+            detail::panel(self, ui);
             library_view::toolbar(self, ui);
             library_view::central(self, ui);
         }
@@ -997,6 +1032,7 @@ impl eframe::App for DropReelApp {
         };
         self.toasts.show(&ctx, toast_bottom);
         library_view::drop_overlay(&ctx);
+        self.paint_screen_fade(&ctx);
 
         for action in std::mem::take(&mut self.actions) {
             self.apply(action, &ctx);

@@ -162,19 +162,17 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     let paused = player.paused();
     let recently_active =
         paused || np.controls_hovered || np.last_activity.elapsed() < HIDE_CONTROLS_AFTER;
-    // In a window the bar has its own space below the video and stays visible.
-    let show_controls = !fullscreen || recently_active;
+    // The controls sit over the video and fade out when the mouse rests, windowed or not.
+    // They stay laid out while faded, so a click right after the mouse moves still lands.
+    let controls_opacity =
+        ctx.animate_bool_with_time(egui::Id::unique("player_controls"), recently_active, 0.25);
 
     let panel_frame = egui::Frame::NONE.fill(theme::ramp::N950);
     egui::CentralPanel::no_frame()
         .frame(panel_frame)
         .show(ui, |ui| {
-            let full = ui.max_rect();
-            let rect = if fullscreen {
-                full
-            } else {
-                Rect::from_min_max(full.min, pos2(full.right(), full.bottom() - BAR_HEIGHT))
-            };
+            // The video fills the window; the controls float over it.
+            let rect = ui.max_rect();
             let ppp = ctx.pixels_per_point();
             let size = [
                 (rect.width() * ppp).round() as i32,
@@ -200,22 +198,18 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 );
             }
 
-            if show_controls {
-                controls(
-                    ui,
-                    full,
-                    player,
-                    np,
-                    actions,
-                    pos,
-                    dur,
-                    paused,
-                    fullscreen,
-                    recently_active,
-                );
-            } else {
-                np.controls_hovered = false;
-            }
+            controls(
+                ui,
+                rect,
+                player,
+                np,
+                actions,
+                pos,
+                dur,
+                paused,
+                fullscreen,
+                controls_opacity,
+            );
             if !recently_active && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p)) {
                 ctx.set_cursor_icon(egui::CursorIcon::None);
             }
@@ -291,31 +285,39 @@ fn controls(
     dur: Option<f64>,
     paused: bool,
     fullscreen: bool,
-    show_title: bool,
+    opacity: f32,
 ) {
+    ui.multiply_opacity(opacity);
     let painter = ui.painter().clone();
-    let top = Rect::from_min_max(rect.left_top(), pos2(rect.right(), rect.top() + 44.0));
+    let top = Rect::from_min_max(rect.left_top(), pos2(rect.right(), rect.top() + 56.0));
     let bar = Rect::from_min_max(
         pos2(rect.left(), rect.bottom() - BAR_HEIGHT),
         rect.right_bottom(),
     );
-    let bar_opacity = if fullscreen { 0.7 } else { 1.0 };
-    painter.rect_filled(bar, 0.0, theme::ramp::N950.gamma_multiply(bar_opacity));
-    if show_title {
-        let fade = Rect::from_min_max(top.left_top(), pos2(top.right(), top.bottom() + 36.0));
-        widgets::vertical_gradient(&painter, fade, media::SCRIM_STRONG, Color32::TRANSPARENT);
-        painter.text(
-            top.left_center() + vec2(20.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            &np.title,
-            theme::font(18.0, "semibold"),
-            media::TEXT,
-        );
-    }
+    // Shade the top and bottom of the picture so the title and controls read on any frame.
+    widgets::vertical_gradient(
+        &painter,
+        Rect::from_min_max(top.left_top(), pos2(top.right(), top.bottom() + 40.0)),
+        media::SCRIM_STRONG,
+        Color32::TRANSPARENT,
+    );
+    widgets::vertical_gradient(
+        &painter,
+        Rect::from_min_max(pos2(bar.left(), bar.top() - 90.0), bar.right_bottom()),
+        Color32::TRANSPARENT,
+        media::SCRIM_STRONG,
+    );
+    painter.text(
+        top.left_center() + vec2(24.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        &np.title,
+        theme::font(20.0, "bold"),
+        media::TEXT,
+    );
     np.controls_hovered = ui
         .ctx()
         .pointer_hover_pos()
-        .is_some_and(|p| bar.contains(p) || (show_title && top.contains(p)));
+        .is_some_and(|p| bar.contains(p) || top.contains(p));
 
     ui.scope_builder(
         egui::UiBuilder::new().max_rect(bar.shrink2(vec2(16.0, 10.0))),
@@ -336,17 +338,10 @@ fn controls(
                         .color(media::TEXT),
                 );
                 let time_w = 70.0;
-                ui.spacing_mut().slider_width = (ui.available_width() - time_w).max(50.0);
-                let mut value = shown;
-                let slider = egui::Slider::new(&mut value, 0.0..=duration.max(0.1))
-                    .show_value(false)
-                    .trailing_fill(true);
-                let r = ui
-                    .add_enabled(duration > 0.0, slider)
-                    .interact(Sense::click());
-                r.widget_info(|| egui::WidgetInfo::slider(duration > 0.0, value, "Seek"));
-                // Fast keyframe seeks while the button is held, one exact seek on release. A quick
-                // click may only report its new value on the release frame.
+                let width = (ui.available_width() - time_w).max(50.0);
+                let (value, r) = line_slider(ui, width, shown, duration, "Seek");
+                // Fast keyframe seeks while the button is held, one exact seek on release (or
+                // on a click that pressed and released within one frame).
                 if r.is_pointer_button_down_on() {
                     if r.changed() {
                         np.seek_drag = Some(value);
@@ -357,16 +352,6 @@ fn controls(
                     player.seek(value, true);
                 } else if let Some(target) = np.seek_drag.take() {
                     player.seek(target, true);
-                } else if r.clicked()
-                    && let Some(p) = r
-                        .interact_pointer_pos()
-                        .or_else(|| ui.ctx().pointer_interact_pos())
-                {
-                    // Press and release in the same frame: egui never saw the button down, so
-                    // map the click position ourselves (same geometry as egui's slider).
-                    let track = r.rect.x_range().shrink(r.rect.height() / 2.5);
-                    let t = ((p.x - track.min) / track.span()).clamp(0.0, 1.0) as f64;
-                    player.seek(t * duration, true);
                 }
                 ui.label(
                     RichText::new(format_duration(duration))
@@ -407,10 +392,7 @@ fn controls(
                     track_menu(ui, player, np, TrackKind::Subtitle);
                     track_menu(ui, player, np, TrackKind::Audio);
                     ui.add_space(8.0);
-                    let mut volume = player.volume();
-                    ui.spacing_mut().slider_width = 96.0;
-                    let r = ui.add(egui::Slider::new(&mut volume, 0.0..=130.0).show_value(false));
-                    r.widget_info(|| egui::WidgetInfo::slider(true, volume, "Volume"));
+                    let (volume, r) = line_slider(ui, 96.0, player.volume(), 130.0, "Volume");
                     if r.on_hover_text(format!("Volume {volume:.0}%")).changed() {
                         player.set_volume(volume);
                     }
@@ -427,6 +409,69 @@ fn controls(
             });
         },
     );
+}
+
+/// Netflix's slider, for seeking and volume: a thin red line on a grey track with a knob,
+/// thicker while hovered. Returns the value the pointer picks (or `shown`) on `0..=max`, and the
+/// response, marked changed when the pointer sets a value.
+fn line_slider(
+    ui: &mut egui::Ui,
+    width: f32,
+    shown: f64,
+    max: f64,
+    name: &str,
+) -> (f64, egui::Response) {
+    let enabled = max > 0.0;
+    let sense = if enabled {
+        Sense::click_and_drag()
+    } else {
+        Sense::hover()
+    };
+    let (rect, mut r) = ui.allocate_exact_size(vec2(width, 26.0), sense);
+    let mut value = shown;
+    // A press and release within one frame may only report the pointer on the context.
+    if enabled
+        && (r.is_pointer_button_down_on() || r.clicked())
+        && let Some(p) = r
+            .interact_pointer_pos()
+            .or_else(|| ui.ctx().pointer_interact_pos())
+    {
+        let t = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+        value = f64::from(t) * max;
+        // Holding still sends nothing new; a click always counts.
+        if (value - shown).abs() > f64::EPSILON || r.clicked() {
+            r.mark_changed();
+        }
+    }
+    r.widget_info(|| egui::WidgetInfo::slider(enabled, value, name));
+
+    let hot = ui.ctx().animate_bool_with_time(
+        r.id.with("hot"),
+        enabled && (r.hovered() || r.dragged()),
+        0.12,
+    );
+    let fraction = if enabled {
+        (value / max).clamp(0.0, 1.0) as f32
+    } else {
+        0.0
+    };
+    let track = Rect::from_center_size(rect.center(), vec2(rect.width(), 4.0 + 3.0 * hot));
+    let painter = ui.painter();
+    painter.rect_filled(track, 2, media::TRACK);
+    let mut done = track;
+    done.set_width(track.width() * fraction);
+    painter.rect_filled(done, 2, media::PROGRESS);
+    if enabled {
+        painter.circle_filled(
+            pos2(done.right(), track.center().y),
+            6.0 + 2.5 * hot,
+            media::PROGRESS,
+        );
+    }
+    if enabled {
+        r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+    (value, r)
 }
 
 /// A round, white icon button for the dark player bar.

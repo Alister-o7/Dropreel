@@ -14,16 +14,24 @@ use crate::util::{format_bytes, format_date, format_duration};
 const HERO_H: f32 = 230.0;
 
 pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
-    let Some(movie) = app.selected.and_then(|id| app.lib.get(id)).cloned() else {
+    // While closing, the panel keeps showing the last movie as it slides out.
+    let Some(movie) = app.detail_shown.and_then(|id| app.lib.get(id)).cloned() else {
         return;
     };
+    let mut open = app.selected.is_some();
     let p = palette(ui.ctx());
     let id = movie.id;
     let missing = app.lib.missing.contains(&id);
     let large = movie.size > app.settings.threshold_bytes();
     let encode = app.encode_badges.get(&id).cloned();
     let frame = egui::Frame::new().fill(p.surface).inner_margin(0);
-    egui::Panel::right("details").default_size(380.0).size_range(320.0..=560.0).resizable(true).frame(frame).show(ui, |ui| {
+    let panel = egui::Panel::right("details")
+        .default_size(380.0)
+        .size_range(320.0..=560.0)
+        .resizable(true)
+        .drag_to_open(false)
+        .frame(frame);
+    panel.show_collapsible(ui, &mut open, |ui| {
         // One scroll position per movie, so switching movies starts at the top.
         egui::ScrollArea::vertical().id_salt(("details", id)).auto_shrink([false, false]).show(ui, |ui| {
             // Hero image fading into the panel.
@@ -225,6 +233,10 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
             });
         });
     });
+    // Dragged shut by its edge.
+    if !open && app.selected.is_some() {
+        app.actions.push(Action::CloseDetails);
+    }
 }
 
 fn tracks_text(tracks: &[crate::library::TrackInfo]) -> String {

@@ -281,6 +281,9 @@ fn style_for(p: &Palette) -> egui::Style {
         ..Default::default()
     };
 
+    // Long enough that panels visibly slide and things fade, short enough to stay snappy.
+    style.animation_time = 0.18;
+
     let s = &mut style.spacing;
     s.item_spacing = vec2(8.0, 8.0);
     s.button_padding = vec2(12.0, 6.0);

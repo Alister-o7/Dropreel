@@ -11,8 +11,9 @@ use super::icons;
 use super::theme::{self, Palette, media, palette, radius};
 use crate::util::file_uri;
 
-/// Paints the poster into `rect`, cropped to fill. While loading, or without a poster, draws a
-/// grey gradient placeholder with the logo's droplet and the title.
+/// Paints the poster into `rect`, cropped to fill. Without a poster, or while it loads, draws a
+/// grey gradient placeholder with the logo's droplet and the title; a loading poster shimmers,
+/// then fades in over it. Returns how far the poster has faded in (0–1).
 pub fn paint_poster(
     ui: &Ui,
     rect: Rect,
@@ -20,26 +21,52 @@ pub fn paint_poster(
     title: &str,
     dim: bool,
     radius: u8,
-) {
+) -> f32 {
     let tint = if dim {
         Color32::from_gray(80)
     } else {
         Color32::WHITE
     };
-    if let Some(path) = poster
-        && let Ok(egui::load::TexturePoll::Ready { texture }) = ui.ctx().try_load_texture(
+    let poll = poster.map(|path| {
+        ui.ctx().try_load_texture(
             &file_uri(path),
             egui::TextureOptions::LINEAR,
             egui::SizeHint::default(),
         )
-    {
+    });
+    let texture = match &poll {
+        Some(Ok(egui::load::TexturePoll::Ready { texture })) => Some(*texture),
+        _ => None,
+    };
+    let loading = matches!(poll, Some(Ok(egui::load::TexturePoll::Pending { .. })));
+    let fade_id = egui::Id::unique("poster-fade").with(poster).with(radius);
+    let shown = ui
+        .ctx()
+        .animate_bool_with_time(fade_id, texture.is_some(), 0.3);
+    if shown < 1.0 {
+        paint_placeholder(ui, rect, title, dim, radius);
+        if loading {
+            shimmer(ui, rect);
+        }
+    }
+    if let Some(texture) = texture {
         egui::Image::new(texture)
             .uv(cover_uv(texture.size, rect.size()))
-            .tint(tint)
+            .tint(tint.gamma_multiply(shown))
             .corner_radius(radius)
             .paint_at(ui, rect);
-        return;
     }
+    shown
+}
+
+/// Whether a poster is a frame grabbed from the movie (rather than real artwork from TMDb).
+pub fn is_frame_poster(poster: Option<&Path>) -> bool {
+    poster
+        .and_then(|p| p.file_name())
+        .is_some_and(|name| name.to_string_lossy().contains("-frame-"))
+}
+
+fn paint_placeholder(ui: &Ui, rect: Rect, title: &str, dim: bool, radius: u8) {
     let (top, bottom) = (theme::ramp::N700, theme::ramp::N850);
     let (top, bottom) = if dim {
         (top.gamma_multiply(0.4), bottom.gamma_multiply(0.4))
@@ -97,6 +124,28 @@ pub fn paint_poster(
     }
 }
 
+/// A soft band of light sweeping across `rect`, for things that are loading.
+fn shimmer(ui: &Ui, rect: Rect) {
+    let phase = (ui.input(|i| i.time) / 1.3).fract() as f32;
+    let band = rect.width() * 0.45;
+    let x = rect.left() - band + phase * (rect.width() + 2.0 * band);
+    let painter = ui.painter_at(rect);
+    let peak = media::GLASS;
+    horizontal_gradient(
+        &painter,
+        Rect::from_min_max(pos2(x - band / 2.0, rect.top()), pos2(x, rect.bottom())),
+        Color32::TRANSPARENT,
+        peak,
+    );
+    horizontal_gradient(
+        &painter,
+        Rect::from_min_max(pos2(x, rect.top()), pos2(x + band / 2.0, rect.bottom())),
+        peak,
+        Color32::TRANSPARENT,
+    );
+    ui.ctx().request_repaint();
+}
+
 /// UV rectangle that crops an image of `image` size to fill `target` without stretching.
 pub fn cover_uv(image: Vec2, target: Vec2) -> Rect {
     if image.x <= 0.0 || image.y <= 0.0 || target.x <= 0.0 || target.y <= 0.0 {
@@ -128,6 +177,18 @@ pub fn play_disc(painter: &egui::Painter, center: Pos2, radius: f32, opacity: f3
         theme::icon_fill_font(radius * 0.9),
         media::ON_PILL.gamma_multiply(opacity),
     );
+}
+
+/// A rectangle filled with a left-to-right gradient.
+pub fn horizontal_gradient(painter: &egui::Painter, rect: Rect, left: Color32, right: Color32) {
+    let mut mesh = Mesh::default();
+    mesh.colored_vertex(rect.left_top(), left);
+    mesh.colored_vertex(rect.right_top(), right);
+    mesh.colored_vertex(rect.left_bottom(), left);
+    mesh.colored_vertex(rect.right_bottom(), right);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 3, 2);
+    painter.add(Shape::mesh(mesh));
 }
 
 /// A rectangle filled with a top-to-bottom gradient.

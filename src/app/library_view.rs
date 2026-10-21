@@ -574,6 +574,7 @@ fn grid(app: &mut DropReelApp, ui: &mut egui::Ui) {
         settings,
         selected,
         encode_badges,
+        filter,
         ..
     } = app;
     let threshold = settings.threshold_bytes();
@@ -581,14 +582,40 @@ fn grid(app: &mut DropReelApp, ui: &mut egui::Ui) {
     let cols = ((avail + GAP) / (MIN_CARD_W + GAP)).floor().max(1.0) as usize;
     let card_w = ((avail - GAP * (cols as f32 - 1.0)) / cols as f32).min(230.0);
     let card_h = card_w * 1.5 + TEXT_H;
+    let row_h = card_h + GAP;
     let rows = visible.len().div_ceil(cols);
+    // The banner sits above the whole library only, not above a shelf, tag or search.
+    let unfiltered =
+        filter.shelf == Shelf::All && filter.tag.is_none() && filter.search.trim().is_empty();
+    let banner = featured(lib).filter(|_| unfiltered);
+    let banner_h = if banner.is_some() {
+        (avail * 0.36).clamp(220.0, 380.0) + GAP
+    } else {
+        0.0
+    };
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show_rows(ui, card_h + GAP, rows, |ui, range| {
-            ui.spacing_mut().item_spacing = vec2(GAP, 0.0);
-            for row in range {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
+        .show_viewport(ui, |ui, viewport| {
+            ui.set_height(banner_h + rows as f32 * row_h);
+            let origin = ui.max_rect().min;
+            if let Some((movie, resume)) = banner
+                && viewport.min.y < banner_h
+            {
+                let rect =
+                    Rect::from_min_size(origin + vec2(0.0, 6.0), vec2(avail, banner_h - GAP));
+                billboard(ui, rect, movie, resume, actions);
+            }
+            // Only the rows in view are laid out.
+            let first = ((viewport.min.y - banner_h) / row_h).floor().max(0.0) as usize;
+            let last = (((viewport.max.y - banner_h) / row_h).ceil().max(0.0) as usize).min(rows);
+            for row in first..last {
+                let top = origin.y + banner_h + row as f32 * row_h + 6.0;
+                let row_rect = Rect::from_min_size(pos2(origin.x, top), vec2(avail + 16.0, card_h));
+                let builder = egui::UiBuilder::new()
+                    .max_rect(row_rect)
+                    .layout(UiLayout::left_to_right(Align::Min));
+                ui.scope_builder(builder, |ui| {
+                    ui.spacing_mut().item_spacing = vec2(GAP, 0.0);
                     for &idx in visible.iter().skip(row * cols).take(cols) {
                         let movie = &lib.movies[idx];
                         card(
@@ -603,9 +630,135 @@ fn grid(app: &mut DropReelApp, ui: &mut egui::Ui) {
                         );
                     }
                 });
-                ui.add_space(GAP - 6.0);
             }
         });
+}
+
+/// The movie for the banner: the one most recently left part-way, or else the newest.
+/// Returns it with the position to resume from, if any.
+fn featured(lib: &Library) -> Option<(&Movie, Option<f64>)> {
+    let present = |m: &&Movie| !lib.missing.contains(&m.id);
+    lib.movies
+        .iter()
+        .filter(present)
+        .filter(|m| !m.watched && m.resume_pos.is_some_and(|p| p > 0.0))
+        .max_by_key(|m| m.last_played.unwrap_or(0))
+        .map(|m| (m, m.resume_pos))
+        .or_else(|| {
+            lib.movies
+                .iter()
+                .filter(present)
+                .max_by_key(|m| m.date_added)
+                .map(|m| (m, None))
+        })
+}
+
+/// A wide banner for one movie, like Netflix's billboard: its picture fading into the page, with
+/// the title and Play / More info.
+fn billboard(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    movie: &Movie,
+    resume: Option<f64>,
+    actions: &mut Vec<Action>,
+) {
+    let p = palette(ui.ctx());
+    widgets::paint_poster(ui, rect, movie.poster.as_deref(), "", false, radius::PANEL);
+    let painter = ui.painter();
+    // Darken the left side for the text, and melt the bottom into the page.
+    widgets::horizontal_gradient(
+        painter,
+        Rect::from_min_max(
+            rect.min,
+            pos2(rect.left() + rect.width() * 0.7, rect.bottom()),
+        ),
+        media::SCRIM_STRONG,
+        Color32::TRANSPARENT,
+    );
+    widgets::vertical_gradient(
+        painter,
+        Rect::from_min_max(
+            pos2(rect.left(), rect.top() + rect.height() * 0.55),
+            rect.right_bottom(),
+        ),
+        Color32::TRANSPARENT,
+        p.bg,
+    );
+
+    let left = rect.left() + 32.0;
+    let text_w = (rect.width() * 0.5).max(240.0);
+    let buttons_y = rect.bottom() - 52.0;
+    let mut meta = Vec::new();
+    if let Some(y) = movie.year {
+        meta.push(y.to_string());
+    }
+    if let Some(d) = movie.duration {
+        meta.push(widgets::short_duration(d));
+    }
+    if let Some(r) = widgets::resolution_label(movie.width, movie.height) {
+        meta.push(r.to_string());
+    }
+    let meta = painter.layout_no_wrap(
+        meta.join("  ·  "),
+        theme::font(14.0, "medium"),
+        media::TEXT_WEAK,
+    );
+    let meta_y = buttons_y - 14.0 - meta.size().y;
+    let title_size = (rect.height() * 0.12).clamp(26.0, 44.0);
+    let mut job = egui::text::LayoutJob::simple(
+        movie.title.clone(),
+        theme::font(title_size, "bold"),
+        media::TEXT,
+        text_w,
+    );
+    job.wrap.max_rows = 2;
+    let title = ui.fonts_mut(|f| f.layout_job(job));
+    let title_y = meta_y - 8.0 - title.size().y;
+    let kicker = if resume.is_some() {
+        "CONTINUE WATCHING"
+    } else {
+        "RECENTLY ADDED"
+    };
+    let kicker = painter.layout_no_wrap(kicker.into(), theme::font(12.0, "bold"), media::TEXT);
+    let kicker_y = title_y - 6.0 - kicker.size().y;
+    painter.rect_filled(
+        Rect::from_min_size(pos2(left, kicker_y + 1.0), vec2(3.0, kicker.size().y - 2.0)),
+        1,
+        p.primary,
+    );
+    painter.galley(pos2(left + 10.0, kicker_y), kicker, media::TEXT);
+    painter.galley(pos2(left, title_y), title, media::TEXT);
+    painter.galley(pos2(left, meta_y), meta, media::TEXT_WEAK);
+
+    let row = Rect::from_min_size(pos2(left, buttons_y), vec2(text_w, 36.0));
+    let builder = egui::UiBuilder::new()
+        .max_rect(row)
+        .layout(UiLayout::left_to_right(Align::Center));
+    ui.scope_builder(builder, |ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        let label = match resume {
+            Some(pos) => format!("Resume {}", crate::util::format_duration(pos)),
+            None => "Play".to_string(),
+        };
+        let play = widgets::button_sized(
+            ui,
+            ButtonKind::Primary,
+            Some(icons::PLAY),
+            &label,
+            110.0,
+            true,
+        );
+        if widgets::named(play, &format!("{label}: {}", movie.title)).clicked() {
+            actions.push(match resume {
+                Some(pos) => Action::StartPlayback(movie.id, Some(pos)),
+                None => Action::Play(movie.id),
+            });
+        }
+        let info = widgets::button(ui, ButtonKind::Secondary, Some(icons::INFO), "More info");
+        if widgets::named(info, &format!("More info: {}", movie.title)).clicked() {
+            actions.push(Action::ShowDetails(movie.id));
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -653,7 +806,7 @@ fn card(
         };
         painter.add(shadow.as_shape(poster, RADIUS));
     }
-    widgets::paint_poster(
+    let poster_shown = widgets::paint_poster(
         ui,
         poster,
         movie.poster.as_deref(),
@@ -661,6 +814,8 @@ fn card(
         missing,
         RADIUS,
     );
+    // A frame from the movie has no title of its own: put one on it, like box art.
+    let title_on_art = poster_shown > 0.0 && widgets::is_frame_poster(movie.poster.as_deref());
     let painter = ui.painter();
 
     if t > 0.01 && encode.is_none() {
@@ -706,6 +861,17 @@ fn card(
             media::TEXT.gamma_multiply(t),
         );
     }
+    // After the hover shading, so the title stays bright.
+    if title_on_art {
+        title_on_poster(
+            ui,
+            poster,
+            &movie.title,
+            poster_shown,
+            movie.resume_pos.is_some(),
+        );
+    }
+    let painter = ui.painter();
     if selected == Some(id) || t > 0.01 {
         let color = if selected == Some(id) {
             p.accent
@@ -809,17 +975,20 @@ fn card(
         );
     }
 
-    // Caption
+    // Caption: the title (unless it is already on the art), then year and length.
     let text_top = poster_base.left_bottom() + vec2(2.0, 10.0);
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        movie.title.clone(),
-        theme::font(14.0, "semibold"),
-        p.text,
-    );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(width - 4.0);
-    let galley = ui.fonts_mut(|f| f.layout_job(job));
-    let title_h = galley.size().y;
-    ui.painter().galley(text_top, galley, p.text);
+    let mut title_h = -3.0;
+    if !title_on_art {
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            movie.title.clone(),
+            theme::font(14.0, "semibold"),
+            p.text,
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width - 4.0);
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        title_h = galley.size().y;
+        ui.painter().galley(text_top, galley, p.text);
+    }
     let mut sub = Vec::new();
     if let Some(y) = movie.year {
         sub.push(y.to_string());
@@ -851,6 +1020,49 @@ fn card(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp.context_menu(|ui| movie_menu(ui, movie, missing, movie.size > threshold, actions));
+}
+
+/// The title across the bottom of a poster, over a dark fade; `opacity` follows the poster's own
+/// fade-in. Leaves room for the resume bar when there is one.
+fn title_on_poster(ui: &egui::Ui, poster: Rect, title: &str, opacity: f32, resume_bar: bool) {
+    let painter = ui.painter();
+    let fade = Rect::from_min_max(
+        pos2(poster.left(), poster.top() + poster.height() * 0.55),
+        poster.right_bottom() - vec2(0.0, f32::from(RADIUS)),
+    );
+    widgets::vertical_gradient(
+        painter,
+        fade,
+        Color32::TRANSPARENT,
+        media::SCRIM_STRONG.gamma_multiply(opacity),
+    );
+    painter.rect_filled(
+        Rect::from_min_max(
+            pos2(poster.left(), poster.bottom() - f32::from(RADIUS)),
+            poster.right_bottom(),
+        ),
+        egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: RADIUS,
+            se: RADIUS,
+        },
+        media::SCRIM_STRONG.gamma_multiply(opacity),
+    );
+    let mut job = egui::text::LayoutJob::simple(
+        title.to_string(),
+        theme::font(16.0, "bold"),
+        media::TEXT,
+        poster.width() - 24.0,
+    );
+    job.wrap.max_rows = 2;
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let bottom = poster.bottom() - if resume_bar { 18.0 } else { 12.0 };
+    painter.galley_with_override_text_color(
+        pos2(poster.left() + 12.0, bottom - galley.size().y),
+        galley,
+        media::TEXT.gamma_multiply(opacity),
+    );
 }
 
 fn menu_item(ui: &mut egui::Ui, icon: &str, label: &str) -> bool {
