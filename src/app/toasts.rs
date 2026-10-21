@@ -67,7 +67,7 @@ impl Toasts {
                     let response = egui::Frame::new()
                         .fill(p.surface)
                         .stroke(egui::Stroke::new(1.0, p.border))
-                        .corner_radius(12)
+                        .corner_radius(theme::radius::PANEL)
                         .inner_margin(egui::Margin {
                             left: 14,
                             right: 16,

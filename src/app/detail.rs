@@ -6,7 +6,7 @@ use eframe::egui::{
 
 use super::icons;
 use super::library_view::{encode_progress_text, movie_menu};
-use super::theme::{self, media, palette};
+use super::theme::{self, media, palette, radius};
 use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, EncodeBadge};
 use crate::util::{format_bytes, format_date, format_duration};
@@ -162,7 +162,7 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 }
 
                 widgets::section_label(ui, "Details");
-                let info_card = egui::Frame::new().fill(p.bg).stroke(Stroke::new(1.0, p.border)).corner_radius(14).inner_margin(Margin::symmetric(14, 12));
+                let info_card = egui::Frame::new().fill(p.bg).stroke(Stroke::new(1.0, p.border)).corner_radius(radius::CARD).inner_margin(Margin::symmetric(14, 12));
                 info_card.show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     egui::Grid::new("detail_info").num_columns(2).spacing([16.0, 10.0]).striped(false).show(ui, |ui| {
@@ -251,14 +251,13 @@ fn tag_chip(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
         .layout_no_wrap(label, theme::font(13.0, "medium"), fg);
     let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(20.0, 10.0), Sense::click());
     if on {
-        widgets::sheen_fill(ui.painter(), rect, egui::CornerRadius::same(255), p.text);
+        ui.painter().rect_filled(rect, radius::CONTROL, p.text);
     } else {
         let fill = if resp.hovered() { p.hover } else { p.raised };
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::same(255), fill);
+        ui.painter().rect_filled(rect, radius::CONTROL, fill);
         ui.painter().rect_stroke(
             rect,
-            egui::CornerRadius::same(255),
+            radius::CONTROL,
             Stroke::new(1.0, p.border),
             egui::StrokeKind::Inside,
         );

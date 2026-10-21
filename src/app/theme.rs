@@ -1,12 +1,11 @@
-//! Look and feel: Inter typography, Phosphor icons, the Midnight palettes (greys and red) and
-//! the bundled artwork.
+//! Look and feel: Inter typography, Phosphor icons, the Netflix-style palettes and the bundled
+//! artwork.
 
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, Color32, ColorImage, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Id,
-    Margin, RichText, Shadow, Stroke, TextStyle, TextureHandle, TextureId, TextureOptions, Theme,
-    vec2,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, RichText,
+    Shadow, Stroke, TextStyle, TextureOptions, Theme, vec2,
 };
 
 const INTER_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
@@ -39,52 +38,71 @@ pub struct Palette {
     pub border: Color32,
     pub text: Color32,
     pub text_weak: Color32,
+    /// Focus rings, selected outlines and icons: white on dark, near-black on light.
     pub accent: Color32,
     pub accent_soft: Color32,
+    /// The red of primary buttons, progress and the current-shelf marker.
+    pub primary: Color32,
+    /// Secondary buttons: Netflix's translucent grey.
+    pub secondary: Color32,
     pub warn: Color32,
     pub danger: Color32,
     pub success: Color32,
     pub dark: bool,
 }
 
-/// The "Midnight" scheme: pure greys from black to white, and red. The interface uses no other
-/// hue: white (dark theme) or black (light theme) is the accent and also marks warnings and
-/// success; red is kept for errors, missing files and deleting. Colour otherwise comes from the
-/// posters.
+/// The colour scheme, after Netflix: a near-black page, slightly lighter panels, white text with
+/// a soft grey for secondary text, and one red for primary actions, progress and the current
+/// selection. Warnings and success use white; red also marks errors and destructive actions.
 pub mod ramp {
     use super::Color32;
 
     pub const N950: Color32 = Color32::from_gray(0);
-    pub const N900: Color32 = Color32::from_gray(10);
-    pub const N850: Color32 = Color32::from_gray(17);
-    pub const N800: Color32 = Color32::from_gray(26);
-    pub const N750: Color32 = Color32::from_gray(36);
-    pub const N700: Color32 = Color32::from_gray(51);
-    pub const N600: Color32 = Color32::from_gray(85);
-    pub const N400: Color32 = Color32::from_gray(166);
-    pub const N300: Color32 = Color32::from_gray(212);
+    pub const N900: Color32 = Color32::from_gray(20);
+    pub const N850: Color32 = Color32::from_gray(24);
+    pub const N800: Color32 = Color32::from_gray(35);
+    pub const N750: Color32 = Color32::from_gray(51);
+    pub const N700: Color32 = Color32::from_gray(64);
+    pub const N600: Color32 = Color32::from_gray(89);
+    pub const N400: Color32 = Color32::from_gray(179);
+    pub const N300: Color32 = Color32::from_gray(210);
     pub const N200: Color32 = Color32::from_gray(229);
-    pub const N100: Color32 = Color32::from_gray(240);
-    pub const N50: Color32 = Color32::from_gray(247);
+    pub const N100: Color32 = Color32::from_gray(238);
+    pub const N50: Color32 = Color32::from_gray(245);
     pub const WHITE: Color32 = Color32::WHITE;
 
-    /// The one hue: bright on black, deeper on white.
-    pub const RED: Color32 = Color32::from_rgb(255, 69, 58);
-    pub const RED_DEEP: Color32 = Color32::from_rgb(215, 20, 30);
+    /// Netflix red, and the deeper red Netflix uses for pressed and text-on-white states.
+    pub const RED: Color32 = Color32::from_rgb(229, 9, 20);
+    pub const RED_DEEP: Color32 = Color32::from_rgb(178, 7, 16);
+}
+
+/// Corner radii: tight, like Netflix's controls and cards.
+pub mod radius {
+    /// Buttons, inputs, menus items, chips.
+    pub const CONTROL: u8 = 4;
+    /// Small badges on posters.
+    pub const BADGE: u8 = 3;
+    /// Poster cards and in-panel cards.
+    pub const CARD: u8 = 6;
+    /// Dialogs, menus and toasts.
+    pub const PANEL: u8 = 8;
 }
 
 pub const DARK: Palette = Palette {
-    bg: ramp::N950,
-    surface: ramp::N900,
+    bg: ramp::N900,
+    surface: ramp::N850,
     raised: ramp::N800,
     hover: ramp::N750,
-    input: ramp::N850,
+    input: ramp::N950,
     border: ramp::N700,
     text: ramp::WHITE,
     text_weak: ramp::N400,
     accent: ramp::WHITE,
     // White at 10%, premultiplied.
     accent_soft: Color32::from_rgba_premultiplied(26, 26, 26, 26),
+    primary: ramp::RED,
+    // rgba(109, 109, 110, 0.7), premultiplied.
+    secondary: Color32::from_rgba_premultiplied(76, 76, 77, 179),
     warn: ramp::WHITE,
     danger: ramp::RED,
     success: ramp::WHITE,
@@ -96,20 +114,22 @@ pub const LIGHT: Palette = Palette {
     surface: ramp::WHITE,
     raised: ramp::N100,
     hover: ramp::N200,
-    input: ramp::N100,
+    input: ramp::WHITE,
     border: ramp::N300,
-    text: ramp::N950,
+    text: ramp::N900,
     text_weak: ramp::N600,
-    accent: ramp::N950,
+    accent: ramp::N900,
     // Black at 7%, premultiplied.
     accent_soft: Color32::from_rgba_premultiplied(0, 0, 0, 18),
-    warn: ramp::N950,
+    primary: ramp::RED,
+    secondary: ramp::N100,
+    warn: ramp::N900,
     danger: ramp::RED_DEEP,
-    success: ramp::N950,
+    success: ramp::N900,
     dark: false,
 };
 
-/// Midnight colours for anything painted over posters, artwork or video. Those stay dark on
+/// Colours for anything painted over posters, artwork or video. Those stay dark on
 /// either theme, so these don't change with it: white content on black scrims and white "glass".
 pub mod media {
     use super::Color32;
@@ -120,7 +140,6 @@ pub mod media {
     /// Frosted fills, from barely there to clearly visible.
     pub const GLASS_FAINT: Color32 = Color32::from_rgba_premultiplied(14, 14, 14, 14);
     pub const GLASS: Color32 = Color32::from_rgba_premultiplied(24, 24, 24, 24);
-    pub const GLASS_STRONG: Color32 = Color32::from_rgba_premultiplied(34, 34, 34, 34);
     /// Tracks, rails and quiet outlines.
     pub const HAIRLINE: Color32 = Color32::from_rgba_premultiplied(40, 40, 40, 40);
     /// The rim of glass controls and frames.
@@ -132,48 +151,13 @@ pub mod media {
     /// Badges: white with black content, or red with white.
     pub const PILL: Color32 = Color32::WHITE;
     pub const ON_PILL: Color32 = super::ramp::N950;
-    pub const DANGER: Color32 = super::ramp::RED_DEEP;
-}
-
-/// Which way a black-to-white gradient runs.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Axis {
-    /// Light at the top, darker at the bottom: a sheen for buttons and chips.
-    Vertical,
-    /// Darker at the start, white at the end: progress fills.
-    Horizontal,
-}
-
-/// A greyscale gradient texture, white at its bright end. Painted multiplied by a colour, it
-/// shades that colour from `0.78×` (vertical) or `0.45×` (horizontal) up to full strength.
-pub fn gradient(ctx: &egui::Context, axis: Axis) -> TextureId {
-    let id = Id::unique(match axis {
-        Axis::Vertical => "midnight-gradient-v",
-        Axis::Horizontal => "midnight-gradient-h",
-    });
-    if let Some(tex) = ctx.data(|d| d.get_temp::<TextureHandle>(id)) {
-        return tex.id();
-    }
-    const N: usize = 64;
-    let (size, low) = match axis {
-        Axis::Vertical => ([1, N], 0.78),
-        Axis::Horizontal => ([N, 1], 0.45),
-    };
-    let pixels = (0..N)
-        .map(|i| {
-            let t = i as f32 / (N - 1) as f32;
-            let t = if axis == Axis::Vertical { 1.0 - t } else { t };
-            Color32::from_gray((255.0 * (low + (1.0 - low) * t)).round() as u8)
-        })
-        .collect();
-    let tex = ctx.load_texture(
-        format!("{id:?}"),
-        ColorImage::new(size, pixels),
-        TextureOptions::LINEAR,
-    );
-    let tex_id = tex.id();
-    ctx.data_mut(|d| d.insert_temp(id, tex));
-    tex_id
+    pub const DANGER: Color32 = super::ramp::RED;
+    /// Progress on posters and in the player: red over a grey track.
+    pub const PROGRESS: Color32 = super::ramp::RED;
+    pub const TRACK: Color32 = Color32::from_rgba_premultiplied(77, 77, 77, 200);
+    /// Round icon buttons over imagery: dark grey with a light rim.
+    pub const BUTTON: Color32 = Color32::from_rgba_premultiplied(25, 25, 25, 153);
+    pub const BUTTON_RIM: Color32 = Color32::from_rgba_premultiplied(128, 128, 128, 128);
 }
 
 pub fn palette(ctx: &egui::Context) -> &'static Palette {
@@ -311,7 +295,7 @@ fn style_for(p: &Palette) -> egui::Style {
     style
 }
 
-/// egui's visuals in Midnight colours. The player bar uses the dark ones on either theme.
+/// egui's visuals in DropReel's colours. The player bar uses the dark ones on either theme.
 pub fn visuals(p: &Palette) -> egui::Visuals {
     let mut v = if p.dark {
         egui::Visuals::dark()
@@ -322,8 +306,8 @@ pub fn visuals(p: &Palette) -> egui::Visuals {
     v.window_fill = p.surface;
     v.extreme_bg_color = p.input;
     v.faint_bg_color = if p.dark { ramp::N850 } else { ramp::N50 };
-    v.window_corner_radius = CornerRadius::same(16);
-    v.menu_corner_radius = CornerRadius::same(12);
+    v.window_corner_radius = CornerRadius::same(radius::PANEL);
+    v.menu_corner_radius = CornerRadius::same(radius::PANEL);
     v.window_stroke = Stroke::new(1.0, p.border);
     let shadow_alpha = if p.dark { 160 } else { 36 };
     v.window_shadow = Shadow {
@@ -338,16 +322,15 @@ pub fn visuals(p: &Palette) -> egui::Visuals {
         spread: 0,
         color: Color32::from_black_alpha(shadow_alpha),
     };
-    // The accent is white (dark theme) or black (light theme): select with a translucent wash
-    // so selected text stays readable.
-    v.selection.bg_fill = p.accent.gamma_multiply(0.3);
+    // A translucent red wash keeps selected text readable; sliders fill in red.
+    v.selection.bg_fill = p.primary.gamma_multiply(0.45);
     v.selection.stroke = Stroke::new(1.0, p.text);
     v.text_cursor.stroke = Stroke::new(2.0, p.accent);
     v.hyperlink_color = p.accent;
     v.slider_trailing_fill = true;
     v.striped = false;
 
-    let radius = CornerRadius::same(8);
+    let radius = CornerRadius::same(radius::CONTROL);
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = p.surface;
     w.noninteractive.weak_bg_fill = p.surface;

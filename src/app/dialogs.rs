@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use eframe::egui::{self, Align, Align2, Color32, Id, Layout, Margin, RichText, Vec2, vec2};
 
 use super::icons;
-use super::theme::{self, palette};
+use super::theme::{self, palette, radius};
 use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, OriginalChoice, PreviewDialog};
 use crate::encode::{EncodeOutcome, EncodePreview, Encoder};
@@ -122,7 +122,7 @@ fn modal<R>(
     let frame = egui::Frame::new()
         .fill(p.surface)
         .stroke(egui::Stroke::new(1.0, p.border))
-        .corner_radius(20)
+        .corner_radius(radius::PANEL)
         .inner_margin(Margin::same(26))
         .shadow(ctx.global_style().visuals.window_shadow);
     let resp = egui::Modal::new(Id::unique(id))
@@ -239,7 +239,7 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
             ui.label(RichText::new("New movies in these folders are added automatically, and moved files are found again.").color(p.text_weak));
             let mut remove = None;
             for (i, folder) in draft.watched_folders.iter().enumerate() {
-                egui::Frame::new().fill(p.raised).corner_radius(8).inner_margin(Margin::symmetric(10, 4)).show(ui, |ui| {
+                egui::Frame::new().fill(p.raised).corner_radius(radius::CONTROL).inner_margin(Margin::symmetric(10, 4)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(icons::FOLDER_OPEN).color(p.text_weak));
@@ -542,7 +542,7 @@ fn tmdb_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
                         for m in results {
                             egui::Frame::new()
                                 .fill(p.raised)
-                                .corner_radius(10)
+                                .corner_radius(radius::CARD)
                                 .inner_margin(12)
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
@@ -914,7 +914,7 @@ fn encode_finished_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
         );
         egui::Frame::new()
             .fill(p.raised)
-            .corner_radius(8)
+            .corner_radius(radius::CARD)
             .inner_margin(Margin::symmetric(10, 6))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());

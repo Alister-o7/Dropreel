@@ -322,8 +322,8 @@ fn controls(
         |ui| {
             // The bar is always dark, whatever the theme.
             *ui.visuals_mut() = theme::visuals(&theme::DARK);
-            ui.visuals_mut().selection.bg_fill = media::TEXT;
-            ui.visuals_mut().widgets.inactive.bg_fill = media::HAIRLINE;
+            ui.visuals_mut().selection.bg_fill = media::PROGRESS;
+            ui.visuals_mut().widgets.inactive.bg_fill = media::TRACK;
             ui.spacing_mut().interact_size.y = 26.0;
 
             // Seek bar

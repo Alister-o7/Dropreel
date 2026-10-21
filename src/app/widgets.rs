@@ -4,11 +4,11 @@ use std::path::Path;
 
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Response, Sense, Shape, Stroke, Ui,
-    Vec2, epaint::RectShape, pos2, vec2,
+    Vec2, pos2, vec2,
 };
 
 use super::icons;
-use super::theme::{self, Axis, Palette, media, palette};
+use super::theme::{self, Palette, media, palette, radius};
 use crate::util::file_uri;
 
 /// Paints the poster into `rect`, cropped to fill. While loading, or without a poster, draws a
@@ -112,46 +112,22 @@ pub fn cover_uv(image: Vec2, target: Vec2) -> Rect {
     }
 }
 
-/// A frosted disc with a white icon, for controls painted over posters and artwork.
-pub fn glass_disc(painter: &egui::Painter, center: Pos2, radius: f32, icon: &str, opacity: f32) {
+/// Netflix's play button over a poster: a white disc with a black icon.
+pub fn play_disc(painter: &egui::Painter, center: Pos2, radius: f32, opacity: f32) {
     painter.circle_filled(
         center,
-        radius * 1.25,
-        media::GLASS_FAINT.gamma_multiply(opacity),
+        radius + 3.0,
+        media::SCRIM_SOFT.gamma_multiply(opacity),
     );
-    painter.circle_filled(center, radius, media::SCRIM_SOFT.gamma_multiply(opacity));
-    painter.circle_filled(center, radius, media::GLASS_STRONG.gamma_multiply(opacity));
-    painter.circle_stroke(
-        center,
-        radius,
-        Stroke::new(1.0, media::EDGE.gamma_multiply(opacity)),
-    );
+    painter.circle_filled(center, radius, media::TEXT.gamma_multiply(opacity));
     // The play triangle looks centred a little right of the true centre.
-    let nudge = if icon == icons::PLAY {
-        radius * 0.08
-    } else {
-        0.0
-    };
     painter.text(
-        center + vec2(nudge, 0.0),
+        center + vec2(radius * 0.08, 0.0),
         Align2::CENTER_CENTER,
-        icon,
+        icons::PLAY,
         theme::icon_fill_font(radius * 0.9),
-        media::TEXT.gamma_multiply(opacity),
+        media::ON_PILL.gamma_multiply(opacity),
     );
-}
-
-/// A rounded shape in `color` with a black-to-white sheen: full strength at the top, a little
-/// darker at the bottom.
-pub fn sheen_fill(
-    painter: &egui::Painter,
-    rect: Rect,
-    radius: impl Into<CornerRadius>,
-    color: Color32,
-) {
-    let tex = theme::gradient(painter.ctx(), Axis::Vertical);
-    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-    painter.add(RectShape::filled(rect, radius, color).with_texture(tex, uv));
 }
 
 /// A rectangle filled with a top-to-bottom gradient.
@@ -185,7 +161,7 @@ pub fn pill(
     let galley = painter.layout_no_wrap(label, theme::font(11.5, "semibold"), fg);
     let size = galley.size() + vec2(14.0, 6.0);
     let rect = anchor.anchor_size(pos, size);
-    painter.rect_filled(rect, CornerRadius::same(255), fill);
+    painter.rect_filled(rect, CornerRadius::same(radius::BADGE), fill);
     painter.galley(rect.min + vec2(7.0, 3.0), galley, fg);
     rect
 }
@@ -216,20 +192,16 @@ pub fn progress_ring(
     painter.add(Shape::line(points, Stroke::new(width, color)));
 }
 
-/// A thin rounded progress bar filling the available width: the text colour, fading in from
-/// dim at the start to full strength at the leading edge.
+/// A thin progress bar filling the available width: red over a grey track.
 pub fn progress_bar(ui: &mut Ui, fraction: f32, height: f32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let p = palette(ui.ctx());
-    let r = CornerRadius::same(255);
+    let r = CornerRadius::same(2);
     ui.painter().rect_filled(rect, r, p.hover);
     let mut done = rect;
     done.set_width(rect.width() * fraction.clamp(0.0, 1.0));
     if done.width() > 0.5 {
-        let tex = theme::gradient(ui.ctx(), Axis::Horizontal);
-        let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-        ui.painter()
-            .add(RectShape::filled(done, r, p.text).with_texture(tex, uv));
+        ui.painter().rect_filled(done, r, p.primary);
     }
     resp
 }
@@ -271,7 +243,7 @@ pub fn icon_toggle(ui: &mut Ui, icon: &str, selected: bool, tooltip: &str) -> Re
     } else {
         Color32::TRANSPARENT.lerp_to_gamma(p.hover, t)
     };
-    ui.painter().rect_filled(rect, 8, bg);
+    ui.painter().rect_filled(rect, radius::CONTROL, bg);
     let fg = if selected {
         p.accent
     } else {
@@ -300,9 +272,8 @@ pub enum ButtonKind {
 
 fn kind_colors(p: &Palette, kind: ButtonKind) -> (Color32, Color32) {
     match kind {
-        // The deep red keeps white text readable on both themes.
-        ButtonKind::Primary => (theme::ramp::RED_DEEP, theme::ramp::WHITE),
-        ButtonKind::Secondary => (p.raised, p.text),
+        ButtonKind::Primary => (p.primary, theme::ramp::WHITE),
+        ButtonKind::Secondary => (p.secondary, p.text),
         ButtonKind::Warn => (p.warn, p.bg),
         // Outlined, so a destructive button never looks like the primary one.
         ButtonKind::Danger => (Color32::TRANSPARENT, p.danger),
@@ -345,8 +316,10 @@ pub fn button_sized(
         .animate_bool_with_time(resp.id, enabled && resp.hovered(), 0.12);
     let bg = match kind {
         ButtonKind::Ghost => Color32::TRANSPARENT.lerp_to_gamma(p.hover, t),
+        // Netflix's grey button fades a little on hover.
+        ButtonKind::Secondary if p.dark => fill.gamma_multiply(1.0 - 0.4 * t),
         ButtonKind::Secondary => fill.lerp_to_gamma(p.hover, t),
-        ButtonKind::Primary => fill.lerp_to_gamma(theme::ramp::RED, t),
+        ButtonKind::Primary => fill.lerp_to_gamma(theme::ramp::WHITE, 0.1 * t),
         ButtonKind::Danger => Color32::TRANSPARENT.lerp_to_gamma(p.danger.gamma_multiply(0.14), t),
         ButtonKind::Warn => fill.lerp_to_gamma(theme::ramp::WHITE, 0.14 * t),
     };
@@ -355,14 +328,12 @@ pub fn button_sized(
     } else {
         (bg.gamma_multiply(0.45), 0.5)
     };
-    let radius = CornerRadius::same(10);
-    if matches!(kind, ButtonKind::Primary | ButtonKind::Warn) {
-        sheen_fill(ui.painter(), rect, radius, bg);
-    } else {
-        ui.painter().rect_filled(rect, radius, bg);
-    }
+    let radius = CornerRadius::same(radius::CONTROL);
+    ui.painter().rect_filled(rect, radius, bg);
     let outline = match kind {
-        ButtonKind::Secondary => Some(Stroke::new(1.0, p.border.gamma_multiply(1.0 - t))),
+        ButtonKind::Secondary if !p.dark => {
+            Some(Stroke::new(1.0, p.border.gamma_multiply(1.0 - t)))
+        }
         ButtonKind::Danger => Some(Stroke::new(1.5, p.danger.gamma_multiply(fg_alpha))),
         _ => None,
     };
@@ -403,11 +374,12 @@ pub fn nav_item(
     } else {
         Color32::TRANSPARENT.lerp_to_gamma(p.hover, t)
     };
-    ui.painter().rect_filled(rect, 10, bg);
+    ui.painter().rect_filled(rect, radius::CONTROL, bg);
     if selected {
         // A short bar marks the current shelf.
         let bar = Rect::from_center_size(rect.left_center() + vec2(1.5, 0.0), vec2(3.0, 16.0));
-        ui.painter().rect_filled(bar, CornerRadius::same(2), p.text);
+        ui.painter()
+            .rect_filled(bar, CornerRadius::same(2), p.primary);
     }
     let fg = if selected {
         p.text
@@ -446,7 +418,7 @@ pub fn nav_item(
             p.raised
         };
         ui.painter()
-            .rect_filled(badge, CornerRadius::same(255), badge_fill);
+            .rect_filled(badge, CornerRadius::same(radius::CONTROL), badge_fill);
         ui.painter()
             .galley(badge.center() - galley.size() / 2.0, galley, p.text_weak);
     }
@@ -482,7 +454,7 @@ pub fn callout<R>(
     egui::Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0, color.gamma_multiply(0.45)))
-        .corner_radius(12)
+        .corner_radius(radius::CARD)
         .inner_margin(14)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -512,10 +484,10 @@ pub fn chip(ui: &mut Ui, icon: Option<&str>, text: &str) -> Response {
         .layout_no_wrap(label, theme::font(12.5, "medium"), p.text_weak);
     let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(18.0, 10.0), Sense::hover());
     ui.painter()
-        .rect_filled(rect, CornerRadius::same(255), p.raised);
+        .rect_filled(rect, CornerRadius::same(radius::CONTROL), p.raised);
     ui.painter().rect_stroke(
         rect,
-        CornerRadius::same(255),
+        CornerRadius::same(radius::CONTROL),
         Stroke::new(1.0, p.border),
         egui::StrokeKind::Inside,
     );

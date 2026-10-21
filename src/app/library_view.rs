@@ -8,7 +8,7 @@ use egui_extras::{Column, TableBuilder};
 
 use super::icons;
 use super::state::{Layout, Library, Shelf, SortKey};
-use super::theme::{self, media, palette};
+use super::theme::{self, media, palette, radius};
 use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, EncodeBadge};
 use crate::library::{Movie, MovieId};
@@ -18,7 +18,7 @@ const MIN_CARD_W: f32 = 158.0;
 const TEXT_H: f32 = 48.0;
 const GAP: f32 = 20.0;
 /// Poster corner radius in the grid.
-const RADIUS: u8 = 14;
+const RADIUS: u8 = radius::CARD;
 
 pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
     let p = palette(ui.ctx());
@@ -209,7 +209,7 @@ fn queue_card(app: &mut DropReelApp, ui: &mut egui::Ui) {
     };
     let resp = egui::Frame::new()
         .fill(p.raised)
-        .corner_radius(12)
+        .corner_radius(radius::CARD)
         .inner_margin(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -307,7 +307,7 @@ pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 ui.add_space(4.0);
                 egui::Frame::new()
                     .fill(p.raised)
-                    .corner_radius(10)
+                    .corner_radius(radius::CONTROL + 2)
                     .inner_margin(2)
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
@@ -393,7 +393,7 @@ fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
     egui::Frame::new()
         .fill(if focused { p.input } else { p.raised })
         .stroke(stroke)
-        .corner_radius(255)
+        .corner_radius(radius::CONTROL)
         .inner_margin(Margin::symmetric(14, 5))
         .show(ui, |ui| {
             // The toolbar lays out right-to-left; the search box itself reads left-to-right.
@@ -481,7 +481,7 @@ fn hero_art(ui: &mut egui::Ui, width: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.743), Sense::hover());
     egui::Image::new(theme::EMPTY_ART_URI)
         .texture_options(theme::SMOOTH)
-        .corner_radius(24)
+        .corner_radius(radius::PANEL)
         .paint_at(ui, rect);
 }
 
@@ -640,7 +640,8 @@ fn card(
     let t = ui
         .ctx()
         .animate_bool_with_time(resp.id.with("hover"), hovered, 0.16);
-    let poster = poster_base.translate(vec2(0.0, -4.0 * t));
+    // Like Netflix, a hovered poster grows a little rather than lifting.
+    let poster = poster_base.expand2(poster_base.size() * 0.03 * t);
     let painter = ui.painter();
 
     if t > 0.0 {
@@ -688,10 +689,15 @@ fn card(
             media::SCRIM_STRONG.gamma_multiply(t),
         );
         if !missing {
-            widgets::glass_disc(painter, poster.center(), 22.0 + 4.0 * t, icons::PLAY, t);
+            widgets::play_disc(painter, poster.center(), 22.0 + 2.0 * t, t);
         }
-        let info_center = info_rect.center() + vec2(0.0, -4.0 * t);
-        painter.circle_filled(info_center, 15.0, media::SCRIM_STRONG.gamma_multiply(t));
+        let info_center = poster.right_top() + vec2(-20.0, 20.0);
+        painter.circle_filled(info_center, 15.0, media::BUTTON.gamma_multiply(t));
+        painter.circle_stroke(
+            info_center,
+            15.0,
+            Stroke::new(1.5, media::BUTTON_RIM.gamma_multiply(t)),
+        );
         painter.text(
             info_center,
             Align2::CENTER_CENTER,
@@ -759,10 +765,10 @@ fn card(
             poster.left_bottom() + vec2(10.0, -10.0),
             poster.right_bottom() + vec2(-10.0, -6.0),
         );
-        painter.rect_filled(bar, 2, media::SCRIM);
+        painter.rect_filled(bar, 1, media::TRACK);
         let mut done = bar;
         done.set_width(bar.width() * (pos / dur).clamp(0.0, 1.0) as f32);
-        painter.rect_filled(done, 2, media::TEXT);
+        painter.rect_filled(done, 1, media::PROGRESS);
     }
 
     // Encode overlay
@@ -778,8 +784,8 @@ fn card(
             center,
             30.0,
             fraction,
-            media::TEXT,
-            media::HAIRLINE,
+            media::PROGRESS,
+            media::TRACK,
             5.0,
         );
         painter.text(
@@ -1118,7 +1124,7 @@ pub fn drop_overlay(ctx: &egui::Context) {
     let inner = rect.shrink(28.0);
     painter.rect_stroke(
         inner,
-        28,
+        radius::PANEL,
         Stroke::new(2.0, media::EDGE),
         egui::StrokeKind::Inside,
     );
