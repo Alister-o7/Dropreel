@@ -160,9 +160,18 @@ pub struct Filter {
     pub descending: bool,
 }
 
-/// Title without a leading article, lowercased: "The Matrix" sorts under M.
+/// Lowercase without accents, so "amelie" finds "Amélie".
+pub fn fold(text: &str) -> String {
+    use unicode_normalization::{UnicodeNormalization as _, char::is_combining_mark};
+    text.nfd()
+        .filter(|c| !is_combining_mark(*c))
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// Title without a leading article or accents, lowercased: "The Matrix" sorts under M.
 pub fn sort_title(title: &str) -> String {
-    let lower = title.trim().to_lowercase();
+    let lower = fold(title.trim());
     for article in ["the ", "a ", "an "] {
         if let Some(rest) = lower.strip_prefix(article) {
             return rest.to_string();
@@ -173,14 +182,14 @@ pub fn sort_title(title: &str) -> String {
 
 /// Indexes into `lib.movies` that match `filter`, in display order.
 pub fn visible_movies(lib: &Library, filter: &Filter) -> Vec<usize> {
-    let needle = filter.search.trim().to_lowercase();
+    let needle = fold(filter.search.trim());
     let mut idx: Vec<usize> = lib
         .movies
         .iter()
         .enumerate()
         .filter(|(_, m)| {
             needle.is_empty()
-                || m.title.to_lowercase().contains(&needle)
+                || fold(&m.title).contains(&needle)
                 || m.year.is_some_and(|y| y.to_string() == needle)
         })
         .filter(|(_, m)| filter.tag.is_none_or(|t| lib.has_tag(m.id, t)))

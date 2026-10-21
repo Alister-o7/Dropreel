@@ -420,7 +420,7 @@ pub fn preview(
     let media = config
         .tools
         .ffprobe()
-        .and_then(|ffprobe| probe::probe(ffprobe, source));
+        .and_then(|ffprobe| probe::probe(ffprobe, source).map_err(String::from));
     let plan = media
         .as_ref()
         .map_err(Clone::clone)
@@ -473,7 +473,7 @@ fn run_job(
             "The file is already under the size limit.".into(),
         ));
     }
-    let media = probe::probe(&ffprobe, &job.source)?;
+    let media = probe::probe(&ffprobe, &job.source).map_err(String::from)?;
     let video = media.video.clone().ok_or("The file has no video track.")?;
     let duration = media.duration.ok_or("The file's duration is unknown.")?;
     let plan = plan::plan(&PlanInput::from_media(&media, config.target_bytes)?)?;

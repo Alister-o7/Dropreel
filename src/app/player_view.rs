@@ -6,6 +6,7 @@ use eframe::egui::{self, Color32, Key, Modifiers, Rect, RichText, Sense, Vec2, p
 
 use super::icons;
 use super::theme;
+use super::widgets;
 use super::{Action, DropReelApp};
 use crate::library::MovieId;
 use crate::player::{Player, PlayerEvent, RefreshRate, Track, TrackKind};
@@ -18,7 +19,7 @@ const HIDE_CONTROLS_AFTER: Duration = Duration::from_millis(2500);
 /// How long after a file loads its playback stats are first logged.
 const DIAGNOSTICS_AFTER: Duration = Duration::from_secs(20);
 /// Height of the control bar. In a window the video sits above it; in fullscreen it overlays.
-const BAR_HEIGHT: f32 = 104.0;
+pub const BAR_HEIGHT: f32 = 104.0;
 /// Fraction of the movie after which it counts as watched.
 pub const WATCHED_FRACTION: f64 = 0.95;
 
@@ -440,7 +441,8 @@ fn player_button(ui: &mut egui::Ui, icon: &str, size: f32, tooltip: &str) -> egu
         theme::icon_font(size),
         color,
     );
-    resp.on_hover_text(tooltip)
+    widgets::named(resp, tooltip)
+        .on_hover_text(tooltip)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -467,7 +469,8 @@ fn play_button(ui: &mut egui::Ui, paused: bool) -> egui::Response {
         theme::icon_fill_font(22.0),
         Color32::WHITE,
     );
-    resp.on_hover_text("Play/pause (Space)")
+    widgets::named(resp, if paused { "Play" } else { "Pause" })
+        .on_hover_text("Play/pause (Space)")
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -485,7 +488,7 @@ fn track_menu(ui: &mut egui::Ui, player: &mut Player, np: &mut NowPlaying, kind:
         .find(|t| t.selected)
         .map_or("Off".to_string(), |t| t.short_label());
     let mut choice: Option<Option<i64>> = None;
-    egui::ComboBox::from_id_salt(name)
+    let combo = egui::ComboBox::from_id_salt(name)
         .selected_text(format!("{icon}  {selected}"))
         .width(160.0)
         .truncate()
@@ -508,6 +511,7 @@ fn track_menu(ui: &mut egui::Ui, player: &mut Player, np: &mut NowPlaying, kind:
                 ui.weak("No subtitles in this file");
             }
         });
+    widgets::name_combo(&combo.response, &format!("{name}: {selected}"));
     if let Some(id) = choice {
         player.select_track(kind, id);
         np.tracks = player.tracks();

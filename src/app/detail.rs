@@ -32,7 +32,7 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
             let fade = Rect::from_min_max(pos2(hero.left(), hero.top() + HERO_H * 0.35), hero.right_bottom());
             widgets::vertical_gradient(ui.painter(), fade, Color32::TRANSPARENT, p.surface);
             let close = Rect::from_center_size(hero.right_top() + vec2(-26.0, 26.0), Vec2::splat(34.0));
-            let close_resp = ui.interact(close, ui.scope_id().with("close"), Sense::click()).on_hover_text("Close");
+            let close_resp = widgets::named(ui.interact(close, ui.scope_id().with("close"), Sense::click()), "Close").on_hover_text("Close");
             let bg = if close_resp.hovered() { 210 } else { 150 };
             ui.painter().circle_filled(close.center(), 17.0, Color32::from_black_alpha(bg));
             ui.painter().text(close.center(), Align2::CENTER_CENTER, icons::X, theme::icon_font(18.0), Color32::WHITE);
@@ -69,7 +69,7 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
                             if widgets::button(ui, ButtonKind::Primary, Some(icons::PLAY), &format!("Resume {}", format_duration(pos))).clicked() {
                                 app.actions.push(Action::StartPlayback(id, Some(pos)));
                             }
-                            if widgets::button(ui, ButtonKind::Secondary, Some(icons::ARROW_COUNTER_CLOCKWISE), "").on_hover_text("Start over").clicked() {
+                            if widgets::named(widgets::button(ui, ButtonKind::Secondary, Some(icons::ARROW_COUNTER_CLOCKWISE), ""), "Start over").on_hover_text("Start over").clicked() {
                                 app.actions.push(Action::StartPlayback(id, None));
                             }
                         }
@@ -264,5 +264,5 @@ fn tag_chip(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
         );
     }
     ui.painter().galley(rect.min + vec2(10.0, 5.0), galley, fg);
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    widgets::named_selectable(resp, name, on).on_hover_cursor(egui::CursorIcon::PointingHand)
 }

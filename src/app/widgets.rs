@@ -191,6 +191,26 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, color: Color32, height: f32) -> 
     resp
 }
 
+/// Gives a hand-painted widget an accessible name, read by screen readers and UI tests.
+pub fn named(resp: Response, name: &str) -> Response {
+    let enabled = resp.enabled();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+    resp
+}
+
+/// Names a combo box, which egui leaves unnamed when it has no visible label.
+pub fn name_combo(resp: &Response, name: &str) {
+    let enabled = resp.enabled();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, name));
+}
+
+/// Like `named`, for a widget with an on/off or selected state.
+pub fn named_selectable(resp: Response, name: &str, selected: bool) -> Response {
+    let enabled = resp.enabled();
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, name));
+    resp
+}
+
 /// A square icon-only button that highlights on hover.
 pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str) -> Response {
     icon_toggle(ui, icon, false, tooltip)
@@ -221,7 +241,8 @@ pub fn icon_toggle(ui: &mut Ui, icon: &str, selected: bool, tooltip: &str) -> Re
         theme::icon_font(19.0),
         fg,
     );
-    resp.on_hover_text(tooltip)
+    named_selectable(resp, tooltip, selected)
+        .on_hover_text(tooltip)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -291,6 +312,11 @@ pub fn button_sized(
     let pos = rect.center() - galley.size() / 2.0;
     ui.painter()
         .galley_with_override_text_color(pos, galley, fg.gamma_multiply(fg_alpha));
+    let resp = if label.is_empty() {
+        resp
+    } else {
+        named(resp, label)
+    };
     if enabled {
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
@@ -347,7 +373,7 @@ pub fn nav_item(
             p.text_weak,
         );
     }
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    named_selectable(resp, label, selected).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Small uppercase section heading.

@@ -39,6 +39,7 @@ which = "8"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 dunce = "1"
+unicode-normalization = "0.1"
 raw-window-handle = "0.6"
 
 [target.'cfg(windows)'.dependencies]
@@ -49,6 +50,7 @@ winresource = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+egui_kittest = { version = "0.37", features = ["eframe"] }
 
 [profile.release]
 lto = "thin"

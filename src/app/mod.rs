@@ -12,7 +12,7 @@ mod theme;
 mod toasts;
 mod widgets;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -141,6 +141,8 @@ pub struct DropReelApp {
     allow_close: bool,
     /// A file opened with "Open with → DropReel": play it once it's in the library.
     play_after_import: Option<PathBuf>,
+    /// Files a background scan failed to import that the user has already been told about.
+    reported_failures: HashSet<PathBuf>,
 
     reload_requested: bool,
     last_reload: Instant,
@@ -153,6 +155,25 @@ impl DropReelApp {
         cc: &eframe::CreationContext<'_>,
         paths: AppPaths,
         open_paths: Vec<PathBuf>,
+    ) -> anyhow::Result<Self> {
+        Self::build(cc, paths, open_paths, false)
+    }
+
+    /// Like `new`, but when there is no OpenGL context (as in UI tests) the player still works,
+    /// just without drawing video.
+    pub fn new_headless(
+        cc: &eframe::CreationContext<'_>,
+        paths: AppPaths,
+        open_paths: Vec<PathBuf>,
+    ) -> anyhow::Result<Self> {
+        Self::build(cc, paths, open_paths, true)
+    }
+
+    fn build(
+        cc: &eframe::CreationContext<'_>,
+        paths: AppPaths,
+        open_paths: Vec<PathBuf>,
+        headless_player: bool,
     ) -> anyhow::Result<Self> {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::install(&cc.egui_ctx);
@@ -174,6 +195,7 @@ impl DropReelApp {
                 tracing::info!("OpenGL renderer: {renderer}");
                 Player::new(get_proc.clone(), cc.egui_ctx.clone())
             }
+            _ if headless_player => Player::headless(cc.egui_ctx.clone()),
             _ => Err("OpenGL is not available".to_string()),
         };
         if let Err(e) = &player {
@@ -226,6 +248,7 @@ impl DropReelApp {
             quit_prompt: false,
             allow_close: false,
             play_after_import: None,
+            reported_failures: HashSet::new(),
             reload_requested: false,
             last_reload: Instant::now(),
             actions: Vec::new(),
@@ -378,9 +401,22 @@ impl DropReelApp {
                 AppEvent::LibraryChanged => self.reload_requested = true,
                 AppEvent::ImportProgress(p) => self.import_progress = Some(p),
                 AppEvent::ImportFinished {
-                    report,
+                    mut report,
                     interactive,
                 } => {
+                    // Scans of watched folders run at every start and on every change; tell
+                    // the user about a file that can't be imported only once per session.
+                    if let Ok(report) = &mut report {
+                        if interactive {
+                            for (path, _) in &report.failed {
+                                self.reported_failures.insert(path.clone());
+                            }
+                        } else {
+                            report
+                                .failed
+                                .retain(|(path, _)| self.reported_failures.insert(path.clone()));
+                        }
+                    }
                     self.imports_running = self.imports_running.saturating_sub(1);
                     if self.imports_running == 0 {
                         self.import_progress = None;
@@ -954,7 +990,12 @@ impl eframe::App for DropReelApp {
             library_view::central(self, ui);
         }
         dialogs::show(self, &ctx);
-        self.toasts.show(&ctx);
+        let toast_bottom = if self.now_playing.is_some() {
+            player_view::BAR_HEIGHT + 16.0
+        } else {
+            20.0
+        };
+        self.toasts.show(&ctx, toast_bottom);
         library_view::drop_overlay(&ctx);
 
         for action in std::mem::take(&mut self.actions) {

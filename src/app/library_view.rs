@@ -292,14 +292,16 @@ pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                     app.filter_dirty = true;
                 }
                 let before = app.filter.sort;
-                egui::ComboBox::from_id_salt("sort")
-                    .selected_text(format!("Sort: {}", app.filter.sort.label()))
+                let sort_label = format!("Sort: {}", app.filter.sort.label());
+                let sort = egui::ComboBox::from_id_salt("sort")
+                    .selected_text(&sort_label)
                     .width(150.0)
                     .show_ui(ui, |ui| {
                         for key in SortKey::ALL {
                             ui.selectable_value(&mut app.filter.sort, key, key.label());
                         }
                     });
+                widgets::name_combo(&sort.response, &sort_label);
                 if before != app.filter.sort {
                     app.filter.descending = app.filter.sort.default_descending();
                     app.filter_dirty = true;
@@ -370,21 +372,23 @@ fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
                         edit.request_focus();
                     }
-                    let clear = if app.filter.search.is_empty() {
-                        " "
+                    if app.filter.search.is_empty() {
+                        // Nothing to clear; keeps the field's layout steady.
+                        ui.label(RichText::new(" ").size(16.0));
                     } else {
-                        icons::X_CIRCLE
-                    };
-                    if ui
-                        .add(
-                            egui::Label::new(RichText::new(clear).size(16.0).color(p.text_weak))
-                                .sense(Sense::click()),
-                        )
-                        .on_hover_text("Clear")
-                        .clicked()
-                    {
-                        app.filter.search.clear();
-                        app.filter_dirty = true;
+                        let clear = ui.add(
+                            egui::Label::new(
+                                RichText::new(icons::X_CIRCLE).size(16.0).color(p.text_weak),
+                            )
+                            .sense(Sense::click()),
+                        );
+                        if widgets::named(clear, "Clear search")
+                            .on_hover_text("Clear search")
+                            .clicked()
+                        {
+                            app.filter.search.clear();
+                            app.filter_dirty = true;
+                        }
                     }
                 },
             );
@@ -562,9 +566,11 @@ fn card(
         poster_base.right_top() + vec2(-20.0, 20.0),
         Vec2::splat(30.0),
     );
+    let resp = widgets::named(resp, &movie.title);
     let info = ui
         .interact(info_rect, resp.id.with("info"), Sense::click())
         .on_hover_text("Details");
+    let info = widgets::named(info, &format!("Details: {}", movie.title));
     let hovered = resp.hovered() || info.hovered();
     let t = ui
         .ctx()

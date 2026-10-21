@@ -207,7 +207,31 @@ pub fn parse_ffprobe_json(json: &str) -> Result<MediaInfo, String> {
     Ok(info)
 }
 
-pub fn probe(ffprobe: &Path, file: &Path) -> Result<MediaInfo, String> {
+/// Why `probe` failed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProbeError {
+    /// ffprobe itself could not be run or gave unusable output.
+    Tool(String),
+    /// ffprobe ran but could not read the file: it is not a media file, or it is damaged.
+    Unreadable(String),
+}
+
+impl std::fmt::Display for ProbeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Tool(e) => f.write_str(e),
+            Self::Unreadable(e) => write!(f, "ffprobe could not read the file: {e}"),
+        }
+    }
+}
+
+impl From<ProbeError> for String {
+    fn from(e: ProbeError) -> Self {
+        e.to_string()
+    }
+}
+
+pub fn probe(ffprobe: &Path, file: &Path) -> Result<MediaInfo, ProbeError> {
     let output = tools::command(ffprobe)
         .args([
             "-v",
@@ -219,12 +243,12 @@ pub fn probe(ffprobe: &Path, file: &Path) -> Result<MediaInfo, String> {
         ])
         .arg(file)
         .output()
-        .map_err(|e| format!("could not run ffprobe: {e}"))?;
+        .map_err(|e| ProbeError::Tool(format!("could not run ffprobe: {e}")))?;
     if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ffprobe could not read the file: {}", err.trim()));
+        let err = crate::util::ffmpeg_error(&String::from_utf8_lossy(&output.stderr));
+        return Err(ProbeError::Unreadable(err));
     }
-    parse_ffprobe_json(&String::from_utf8_lossy(&output.stdout))
+    parse_ffprobe_json(&String::from_utf8_lossy(&output.stdout)).map_err(ProbeError::Tool)
 }
 
 /// HDR10 static metadata, formatted for x265's `master-display` / `max-cll` options.

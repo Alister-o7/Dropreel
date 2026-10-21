@@ -105,9 +105,23 @@ into `packaging\deps`), `-Stage build` (`cargo build --release`) and `-Stage pac
 
 For development, `cargo run` works once `libmpv-2.dll`, `ffmpeg.exe` and `ffprobe.exe` are
 next to the built exe or on `PATH` (e.g. `$env:PATH = "$PWD\packaging\deps;$env:PATH"`).
-`cargo test` runs the unit tests plus integration tests that drive a real ffmpeg; those skip
-themselves when ffmpeg isn't found. Set `DROPREEL_HOME` to use a separate data folder while
-testing.
+Set `DROPREEL_HOME` to use a separate data folder while trying things out.
+
+### Tests
+
+`cargo test` runs the unit tests and these integration suites. They generate small test clips
+with ffmpeg once, and cache them under `target/`.
+
+| Suite | What it covers |
+|---|---|
+| `tests/library.rs` | Importing every supported container from nested folders, junk and partial files, duplicates, concurrent imports, moved/missing/removed files, Locate…, folder watching, search/sort/shelves/tags |
+| `tests/player.rs` | Real libmpv, headless: loading, resume, pause, seeking, end of file, audio/subtitle tracks, volume, unplayable files, smooth motion |
+| `tests/ui.rs` | The whole app driven through its accessibility tree with egui_kittest: drag & drop, search, details, removal, settings, playback controls, resume prompt, keyboard shortcuts, track menus, "Open with" |
+| `tests/ffmpeg_pipeline.rs`, `tests/encode_queue.rs` | Probing, thumbnails, real HEVC encodes and verification |
+
+Suites skip themselves when ffmpeg or libmpv can't be found. Point `DROPREEL_LIBMPV` at
+`libmpv-2.dll` to run the playback tests. Set `DROPREEL_REQUIRE_FFMPEG=1` and
+`DROPREEL_REQUIRE_MPV=1` to make a missing tool fail instead; CI sets both.
 
 ### Where the bundled binaries come from
 

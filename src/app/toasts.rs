@@ -40,7 +40,9 @@ impl Toasts {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) {
+    /// Shows the toasts centred `bottom` points above the bottom of the window, clear of the side
+    /// panels' buttons (and, while playing, of the player bar).
+    pub fn show(&mut self, ctx: &egui::Context, bottom: f32) {
         let now = Instant::now();
         self.items.retain(|t| t.until > now);
         if self.items.is_empty() {
@@ -49,7 +51,7 @@ impl Toasts {
         let p = palette(ctx);
         let mut dismissed = None;
         egui::Area::new(egui::Id::unique("toasts"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, [-20.0, -20.0])
+            .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -bottom])
             .order(egui::Order::Tooltip)
             .show(ctx, |ui| {
                 ui.set_max_width(400.0);
@@ -59,7 +61,7 @@ impl Toasts {
                         ToastKind::Success => (icons::CHECK_CIRCLE, p.success),
                         ToastKind::Error => (icons::WARNING_CIRCLE, p.danger),
                     };
-                    // Slide in from the right.
+                    // Fade in and out.
                     let t = (now.duration_since(toast.created).as_secs_f32() / 0.18).min(1.0);
                     let fade = (toast.until.duration_since(now).as_secs_f32() / 0.3).min(1.0);
                     let response = egui::Frame::new()

@@ -51,9 +51,12 @@ jobs:
         shell: pwsh
         env:
           DROPREEL_REQUIRE_FFMPEG: "1"
+          DROPREEL_REQUIRE_MPV: "1"
         run: |
-          # The integration tests use the downloaded ffmpeg/ffprobe for real encodes.
+          # The integration tests use the downloaded ffmpeg/ffprobe (imports, encodes) and
+          # libmpv (headless playback, and the UI tests driving the whole app).
           $env:PATH = "$PWD\packaging\deps;$env:PATH"
+          $env:DROPREEL_LIBMPV = "$PWD\packaging\deps\libmpv-2.dll"
           cargo test --locked
 
       - name: Install Inno Setup

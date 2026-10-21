@@ -24,6 +24,10 @@ pub fn grab_frame(
     attempts.push((at, ""));
     attempts.push((0.0, ""));
 
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    }
     let mut last_error = String::new();
     for (seek, filter) in attempts {
         let _ = std::fs::remove_file(out);
@@ -55,7 +59,7 @@ pub fn grab_frame(
         if output.status.success() && written {
             return Ok(());
         }
-        last_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        last_error = crate::util::ffmpeg_error(&String::from_utf8_lossy(&output.stderr));
     }
     Err(format!("could not grab a frame: {last_error}"))
 }

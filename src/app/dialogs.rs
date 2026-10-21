@@ -288,18 +288,20 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
                 ui.add(egui::DragValue::new(&mut draft.threshold_gb).range(1.0..=200.0).speed(0.1).suffix(" GB"));
                 ui.end_row();
                 ui.label("Encoder");
-                egui::ComboBox::from_id_salt("encoder").width(300.0).selected_text(draft.encoder.label()).show_ui(ui, |ui| {
+                let combo = egui::ComboBox::from_id_salt("encoder").width(300.0).selected_text(draft.encoder.label()).show_ui(ui, |ui| {
                     for choice in EncoderChoice::ALL {
                         ui.selectable_value(&mut draft.encoder, choice, choice.label());
                     }
                 });
+                widgets::name_combo(&combo.response, "Encoder");
                 ui.end_row();
                 ui.label("x265 preset");
-                egui::ComboBox::from_id_salt("x265_preset").selected_text(draft.x265_preset.clone()).show_ui(ui, |ui| {
+                let combo = egui::ComboBox::from_id_salt("x265_preset").selected_text(draft.x265_preset.clone()).show_ui(ui, |ui| {
                     for preset in X265_PRESETS {
                         ui.selectable_value(&mut draft.x265_preset, preset.to_string(), preset);
                     }
                 });
+                widgets::name_combo(&combo.response, "x265 preset");
                 ui.end_row();
             });
             let found = Tools::locate(draft);

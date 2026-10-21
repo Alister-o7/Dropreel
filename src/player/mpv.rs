@@ -219,7 +219,7 @@ pub struct Player {
     handle: *mut ffi::mpv_handle,
     render: *mut ffi::mpv_render_context,
     // Kept alive for as long as mpv may call back into them.
-    _get_proc: Box<GetProcAddress>,
+    _get_proc: Option<Box<GetProcAddress>>,
     _wake_ctx: Box<egui::Context>,
     target: Option<RenderTarget>,
     /// mpv's own values for the options in SIMPLE_SCALING, to restore high-quality scaling.
@@ -249,6 +249,55 @@ impl Player {
     /// Creates an mpv instance that renders through the app's OpenGL context. Must be called
     /// on the UI thread with that context current (e.g. in eframe's app creator).
     pub fn new(get_proc: GetProcAddress, ctx: egui::Context) -> Result<Self, String> {
+        let mut player = Self::create(ctx, &[("vo", "libmpv")], Some(Box::new(get_proc)))?;
+        let api = cstr("opengl");
+        let get_proc_ctx = player
+            ._get_proc
+            .as_deref()
+            .map_or(std::ptr::null_mut(), |g| {
+                g as *const GetProcAddress as *mut c_void
+            });
+        let mut init = ffi::mpv_opengl_init_params {
+            get_proc_address: Some(get_proc_address),
+            get_proc_address_ctx: get_proc_ctx,
+        };
+        let mut params = [
+            ffi::mpv_render_param {
+                kind: ffi::MPV_RENDER_PARAM_API_TYPE,
+                data: api.as_ptr() as *mut c_void,
+            },
+            ffi::mpv_render_param {
+                kind: ffi::MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,
+                data: &mut init as *mut _ as *mut c_void,
+            },
+            ffi::mpv_render_param {
+                kind: ffi::MPV_RENDER_PARAM_INVALID,
+                data: std::ptr::null_mut(),
+            },
+        ];
+        let mut render = std::ptr::null_mut();
+        let rc = unsafe {
+            (player.lib.render_context_create)(&mut render, player.handle, params.as_mut_ptr())
+        };
+        player.check(rc, "create the mpv OpenGL renderer")?;
+        player.render = render;
+        let wake = &*player._wake_ctx as *const egui::Context as *mut c_void;
+        unsafe { (player.lib.render_context_set_update_callback)(render, Some(wake_up), wake) };
+        Ok(player)
+    }
+
+    /// Creates an mpv instance that decodes and plays in real time without drawing a picture or
+    /// playing sound. Everything except `render` works as usual; used by tests.
+    pub fn headless(ctx: egui::Context) -> Result<Self, String> {
+        Self::create(ctx, &[("vo", "null"), ("ao", "null")], None)
+    }
+
+    /// `outputs` are the video/audio output options.
+    fn create(
+        ctx: egui::Context,
+        outputs: &[(&str, &str)],
+        get_proc: Option<Box<GetProcAddress>>,
+    ) -> Result<Self, String> {
         let lib = ffi::lib()?;
         let handle = unsafe { (lib.create)() };
         if handle.is_null() {
@@ -258,7 +307,7 @@ impl Player {
             lib,
             handle,
             render: std::ptr::null_mut(),
-            _get_proc: Box::new(get_proc),
+            _get_proc: get_proc,
             _wake_ctx: Box::new(ctx),
             target: None,
             default_scaling: Vec::new(),
@@ -266,8 +315,10 @@ impl Player {
             display_fps: None,
             stats: RenderStats::default(),
         };
+        for (name, value) in outputs {
+            player.option(name, value);
+        }
         for (name, value) in [
-            ("vo", "libmpv"),
             ("hwdec", "auto-safe"),
             ("keep-open", "yes"),
             ("idle", "yes"),
@@ -298,30 +349,6 @@ impl Player {
         }
         player.check(unsafe { (lib.initialize)(handle) }, "initialize mpv")?;
 
-        let api = cstr("opengl");
-        let mut init = ffi::mpv_opengl_init_params {
-            get_proc_address: Some(get_proc_address),
-            get_proc_address_ctx: &*player._get_proc as *const GetProcAddress as *mut c_void,
-        };
-        let mut params = [
-            ffi::mpv_render_param {
-                kind: ffi::MPV_RENDER_PARAM_API_TYPE,
-                data: api.as_ptr() as *mut c_void,
-            },
-            ffi::mpv_render_param {
-                kind: ffi::MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,
-                data: &mut init as *mut _ as *mut c_void,
-            },
-            ffi::mpv_render_param {
-                kind: ffi::MPV_RENDER_PARAM_INVALID,
-                data: std::ptr::null_mut(),
-            },
-        ];
-        let mut render = std::ptr::null_mut();
-        let rc = unsafe { (lib.render_context_create)(&mut render, handle, params.as_mut_ptr()) };
-        player.check(rc, "create the mpv OpenGL renderer")?;
-        player.render = render;
-
         player.default_scaling = SIMPLE_SCALING
             .iter()
             .map(|(name, _)| (*name, player.get_string(name).unwrap_or_default()))
@@ -340,10 +367,7 @@ impl Player {
         }
 
         let wake = &*player._wake_ctx as *const egui::Context as *mut c_void;
-        unsafe {
-            (lib.render_context_set_update_callback)(render, Some(wake_up), wake);
-            (lib.set_wakeup_callback)(handle, Some(wake_up), wake);
-        }
+        unsafe { (lib.set_wakeup_callback)(handle, Some(wake_up), wake) };
         Ok(player)
     }
 
@@ -680,6 +704,9 @@ impl Player {
         frame: &mut eframe::Frame,
         size: [i32; 2],
     ) -> Option<egui::TextureId> {
+        if self.render.is_null() {
+            return None;
+        }
         let size = [size[0].max(1), size[1].max(1)];
         // Called once per displayed frame: tells mpv the previous frame reached the screen (eframe
         // swaps with vsync at the end of each frame), so it can time frames against the display's

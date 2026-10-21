@@ -105,11 +105,15 @@ struct Candidate {
     warning: Option<String>,
 }
 
-/// Reads size, fingerprint and (if ffprobe is available) technical details of a file.
+/// Reads size, fingerprint and (if ffprobe is available) technical details of a file. Fails for
+/// files that ffprobe shows are not videos (empty, damaged beyond reading, or audio only).
 fn read_candidate(path: &Path, tools: &Tools) -> Result<Candidate, String> {
     let size = std::fs::metadata(path)
         .map_err(|e| format!("cannot read file: {e}"))?
         .len();
+    if size == 0 {
+        return Err("the file is empty".into());
+    }
     let fingerprint =
         fingerprint::fingerprint(path).map_err(|e| format!("cannot read file: {e}"))?;
     let mut info = FileInfo {
@@ -122,6 +126,9 @@ fn read_candidate(path: &Path, tools: &Tools) -> Result<Candidate, String> {
     let mut warning = None;
     if let Some(ffprobe) = &tools.ffprobe {
         match probe::probe(ffprobe, path) {
+            Ok(media) if media.video.is_none() => {
+                return Err("the file has no video track".into());
+            }
             Ok(media) => {
                 info.duration = media.duration;
                 if let Some(v) = &media.video {
@@ -141,7 +148,10 @@ fn read_candidate(path: &Path, tools: &Tools) -> Result<Candidate, String> {
                     .map(probe::OtherStream::to_track_info)
                     .collect();
             }
-            Err(e) => warning = Some(e),
+            Err(probe::ProbeError::Unreadable(e)) => {
+                return Err(format!("not a readable video file ({e})"));
+            }
+            Err(e) => warning = Some(e.to_string()),
         }
     }
     Ok(Candidate { info, hdr, warning })
@@ -235,6 +245,13 @@ pub fn run_import(
                 continue;
             }
         };
+        // Another import (e.g. a watched-folder scan) may have added it since we started.
+        if db.find_by_path(&path)?.is_some() {
+            if report_known {
+                report.skipped.push((path, "already in the library".into()));
+            }
+            continue;
+        }
         let matches = db.find_by_fingerprint(&c.info.fingerprint)?;
         if let Some((id, _, title)) = matches.iter().find(|(_, p, _)| !p.exists()) {
             db.relink(*id, &path, c.info.size, &c.info.fingerprint)?;
