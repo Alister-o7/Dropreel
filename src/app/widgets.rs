@@ -326,7 +326,7 @@ pub enum ButtonKind {
 
 fn kind_colors(p: &Palette, kind: ButtonKind) -> (Color32, Color32) {
     match kind {
-        ButtonKind::Primary => (p.primary, theme::ramp::WHITE),
+        ButtonKind::Primary => (p.primary, p.on_primary),
         ButtonKind::Secondary => (p.secondary, p.text),
         ButtonKind::Warn => (p.warn, p.bg),
         // Outlined, so a destructive button never looks like the primary one.

@@ -38,11 +38,13 @@ pub struct Palette {
     pub border: Color32,
     pub text: Color32,
     pub text_weak: Color32,
-    /// Focus rings, selected outlines and icons: white on dark, near-black on light.
+    /// Focus rings, selected outlines and icons: soft white on dark, near-black on light.
     pub accent: Color32,
     pub accent_soft: Color32,
     /// The red of primary buttons, progress and the current-shelf marker.
     pub primary: Color32,
+    /// Text and icons on `primary`.
+    pub on_primary: Color32,
     /// Secondary buttons: Netflix's translucent grey.
     pub secondary: Color32,
     pub warn: Color32,
@@ -51,9 +53,10 @@ pub struct Palette {
     pub dark: bool,
 }
 
-/// The colour scheme, after Netflix: a near-black page, slightly lighter panels, white text with
+/// The colour scheme, after Netflix: a near-black page, slightly lighter panels, soft white text with
 /// a soft grey for secondary text, and one brick red for primary actions, progress and the current
-/// selection. Warnings and success use white; red also marks errors and destructive actions.
+/// selection. Warnings and success use the text colour; red also marks errors and destructive
+/// actions.
 pub mod ramp {
     use super::Color32;
 
@@ -70,6 +73,8 @@ pub mod ramp {
     pub const N100: Color32 = Color32::from_gray(238);
     pub const N50: Color32 = Color32::from_gray(245);
     pub const WHITE: Color32 = Color32::WHITE;
+    /// The soft white of text and white controls on dark: easier on the eyes than pure white.
+    pub const ASH: Color32 = Color32::from_gray(217);
 
     /// A calm brick red, and a deeper one for red text on white.
     pub const RED: Color32 = Color32::from_rgb(179, 55, 58);
@@ -95,17 +100,18 @@ pub const DARK: Palette = Palette {
     hover: ramp::N750,
     input: ramp::N950,
     border: ramp::N700,
-    text: ramp::WHITE,
+    text: ramp::ASH,
     text_weak: ramp::N400,
-    accent: ramp::WHITE,
+    accent: ramp::ASH,
     // White at 10%, premultiplied.
     accent_soft: Color32::from_rgba_premultiplied(26, 26, 26, 26),
     primary: ramp::RED,
+    on_primary: ramp::ASH,
     // rgba(109, 109, 110, 0.7), premultiplied.
     secondary: Color32::from_rgba_premultiplied(76, 76, 77, 179),
-    warn: ramp::WHITE,
+    warn: ramp::ASH,
     danger: ramp::RED,
-    success: ramp::WHITE,
+    success: ramp::ASH,
     dark: true,
 };
 
@@ -122,6 +128,7 @@ pub const LIGHT: Palette = Palette {
     // Black at 7%, premultiplied.
     accent_soft: Color32::from_rgba_premultiplied(0, 0, 0, 18),
     primary: ramp::RED,
+    on_primary: ramp::WHITE,
     secondary: ramp::N100,
     warn: ramp::N900,
     danger: ramp::RED_DEEP,
@@ -134,9 +141,9 @@ pub const LIGHT: Palette = Palette {
 pub mod media {
     use super::Color32;
 
-    /// Text and icons.
-    pub const TEXT: Color32 = Color32::WHITE;
-    pub const TEXT_WEAK: Color32 = Color32::from_rgba_premultiplied(200, 200, 200, 200);
+    /// Text and icons: the soft white, and the same at 75%.
+    pub const TEXT: Color32 = super::ramp::ASH;
+    pub const TEXT_WEAK: Color32 = Color32::from_rgba_premultiplied(163, 163, 163, 191);
     /// Frosted fills, from barely there to clearly visible.
     pub const GLASS_FAINT: Color32 = Color32::from_rgba_premultiplied(14, 14, 14, 14);
     pub const GLASS: Color32 = Color32::from_rgba_premultiplied(24, 24, 24, 24);
@@ -148,8 +155,8 @@ pub mod media {
     pub const SCRIM_SOFT: Color32 = Color32::from_black_alpha(100);
     pub const SCRIM: Color32 = Color32::from_black_alpha(140);
     pub const SCRIM_STRONG: Color32 = Color32::from_black_alpha(180);
-    /// Badges: white with black content, or red with white.
-    pub const PILL: Color32 = Color32::WHITE;
+    /// Badges: soft white with black content, or red with soft white.
+    pub const PILL: Color32 = super::ramp::ASH;
     pub const ON_PILL: Color32 = super::ramp::N950;
     pub const DANGER: Color32 = super::ramp::RED;
     /// Progress on posters and in the player: red over a grey track.
