@@ -1,10 +1,11 @@
 //! Custom widgets and drawing helpers: posters, pills, buttons, progress ring, gradients.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Response, Sense, Shape, Stroke, Ui,
-    Vec2, pos2, vec2,
+    self, Align2, Color32, CornerRadius, FontId, Galley, Mesh, Pos2, Rect, Response, Sense, Shape,
+    Stroke, Ui, Vec2, pos2, vec2,
 };
 
 use super::icons;
@@ -139,6 +140,42 @@ fn shimmer(ui: &Ui, rect: Rect) {
     ui.ctx().request_repaint();
 }
 
+/// The visible (inked) bounds of a laid-out galley, relative to its origin.
+fn ink_bounds(galley: &Galley) -> Option<Rect> {
+    let mut ink: Option<Rect> = None;
+    for row in &galley.rows {
+        for glyph in &row.row.glyphs {
+            let size = glyph.uv_rect.size;
+            if size.x <= 0.0 || size.y <= 0.0 {
+                continue;
+            }
+            let min = row.pos + glyph.pos.to_vec2() + glyph.uv_rect.offset;
+            let rect = Rect::from_min_size(min, size);
+            ink = Some(ink.map_or(rect, |r| r.union(rect)));
+        }
+    }
+    ink
+}
+
+/// Paints `galley` with its visible shape centred on `center`.
+pub fn galley_centered(painter: &egui::Painter, center: Pos2, galley: Arc<Galley>, color: Color32) {
+    let ink = ink_bounds(&galley).unwrap_or(galley.rect);
+    painter.galley_with_override_text_color(center - ink.center().to_vec2(), galley, color);
+}
+
+/// Paints an icon with its visible shape centred on `center`. Centring the text layout instead
+/// centres the font's line box, which leaves icons sitting low in circles and badges.
+pub fn icon_centered(
+    painter: &egui::Painter,
+    center: Pos2,
+    icon: &str,
+    font: FontId,
+    color: Color32,
+) {
+    let galley = painter.layout_no_wrap(icon.to_owned(), font, color);
+    galley_centered(painter, center, galley, color);
+}
+
 /// UV rectangle that crops an image of `image` size to fill `target` without stretching.
 pub fn cover_uv(image: Vec2, target: Vec2) -> Rect {
     if image.x <= 0.0 || image.y <= 0.0 || target.x <= 0.0 || target.y <= 0.0 {
@@ -162,14 +199,20 @@ pub fn play_disc(painter: &egui::Painter, center: Pos2, radius: f32, opacity: f3
         media::SCRIM_SOFT.gamma_multiply(opacity),
     );
     painter.circle_filled(center, radius, media::TEXT.gamma_multiply(opacity));
-    // The play triangle looks centred a little right of the true centre.
-    painter.text(
-        center + vec2(radius * 0.08, 0.0),
-        Align2::CENTER_CENTER,
-        icons::PLAY,
-        theme::icon_fill_font(radius * 0.9),
+    play_icon(
+        painter,
+        center,
+        radius * 0.9,
         media::ON_PILL.gamma_multiply(opacity),
     );
+}
+
+/// The filled play triangle centred on `center`. A triangle's box centre looks too far left, so
+/// it moves right a little, to the triangle's centroid.
+pub fn play_icon(painter: &egui::Painter, center: Pos2, size: f32, color: Color32) {
+    let galley = painter.layout_no_wrap(icons::PLAY.to_owned(), theme::icon_fill_font(size), color);
+    let width = ink_bounds(&galley).map_or(size, |r| r.width());
+    galley_centered(painter, center + vec2(width / 6.0, 0.0), galley, color);
 }
 
 /// A rectangle filled with a left-to-right gradient.
@@ -212,11 +255,21 @@ pub fn pill(
         Some(i) => format!("{i} {text}"),
         None => text.to_string(),
     };
+    let icon_only = icon.is_some() && text.is_empty();
     let galley = painter.layout_no_wrap(label, theme::font(11.5, "semibold"), fg);
-    let size = galley.size() + vec2(14.0, 6.0);
+    let size = if icon_only {
+        // A square badge around the icon.
+        Vec2::splat(galley.size().y + 6.0)
+    } else {
+        galley.size() + vec2(14.0, 6.0)
+    };
     let rect = anchor.anchor_size(pos, size);
     painter.rect_filled(rect, CornerRadius::same(radius::BADGE), fill);
-    painter.galley(rect.min + vec2(7.0, 3.0), galley, fg);
+    if icon_only {
+        galley_centered(painter, rect.center(), galley, fg);
+    } else {
+        painter.galley(rect.min + vec2(7.0, 3.0), galley, fg);
+    }
     rect
 }
 
@@ -303,9 +356,9 @@ pub fn icon_toggle(ui: &mut Ui, icon: &str, selected: bool, tooltip: &str) -> Re
     } else {
         p.text_weak.lerp_to_gamma(p.text, t)
     };
-    ui.painter().text(
+    icon_centered(
+        ui.painter(),
         rect.center(),
-        Align2::CENTER_CENTER,
         icon,
         theme::icon_font(19.0),
         fg,
@@ -395,9 +448,18 @@ pub fn button_sized(
         ui.painter()
             .rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
     }
-    let pos = rect.center() - galley.size() / 2.0;
-    ui.painter()
-        .galley_with_override_text_color(pos, galley, fg.gamma_multiply(fg_alpha));
+    if label.is_empty() {
+        galley_centered(
+            ui.painter(),
+            rect.center(),
+            galley,
+            fg.gamma_multiply(fg_alpha),
+        );
+    } else {
+        let pos = rect.center() - galley.size() / 2.0;
+        ui.painter()
+            .galley_with_override_text_color(pos, galley, fg.gamma_multiply(fg_alpha));
+    }
     let resp = if label.is_empty() {
         resp
     } else {
@@ -441,9 +503,9 @@ pub fn nav_item(
         p.text_weak.lerp_to_gamma(p.text, t)
     };
     let icon_color = if selected { p.accent } else { fg };
-    ui.painter().text(
-        rect.left_center() + vec2(12.0, 0.0),
-        Align2::LEFT_CENTER,
+    icon_centered(
+        ui.painter(),
+        rect.left_center() + vec2(21.0, 0.0),
         icon,
         theme::icon_font(18.0),
         icon_color,

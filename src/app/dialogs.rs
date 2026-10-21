@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use eframe::egui::{self, Align, Align2, Color32, Id, Layout, Margin, RichText, Vec2, vec2};
+use eframe::egui::{self, Align, Color32, Id, Layout, Margin, RichText, Vec2, vec2};
 
 use super::icons;
 use super::theme::{self, palette, radius};
@@ -146,9 +146,9 @@ fn header(ui: &mut egui::Ui, icon: &str, color: Color32, title: &str, subtitle: 
             22.0,
             color.gamma_multiply(if p.dark { 0.16 } else { 0.10 }),
         );
-        ui.painter().text(
+        widgets::icon_centered(
+            ui.painter(),
             rect.center(),
-            Align2::CENTER_CENTER,
             icon,
             theme::icon_fill_font(23.0),
             color,

@@ -360,53 +360,62 @@ fn controls(
                 );
             });
 
-            // Buttons
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                if player_button(ui, icons::ARROW_LEFT, 22.0, "Back to the library (Esc)").clicked()
-                {
-                    actions.push(Action::StopPlayback { finished: false });
-                }
-                ui.add_space(10.0);
-                if player_button(ui, icons::REWIND, 22.0, "Back 10 seconds (←)").clicked() {
-                    player.seek_relative(-10.0);
-                }
-                if play_button(ui, paused).clicked() {
-                    player.set_paused(!paused);
-                }
-                if player_button(ui, icons::FAST_FORWARD, 22.0, "Forward 10 seconds (→)").clicked()
-                {
-                    player.seek_relative(10.0);
-                }
+            // Buttons, in a row as tall as the play button from the start, so every button is
+            // centred on the same line (a plain horizontal row centres early items on its height
+            // so far).
+            let row = vec2(ui.available_width(), 46.0);
+            ui.allocate_ui_with_layout(
+                row,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if player_button(ui, icons::ARROW_LEFT, 22.0, "Back to the library (Esc)")
+                        .clicked()
+                    {
+                        actions.push(Action::StopPlayback { finished: false });
+                    }
+                    ui.add_space(10.0);
+                    if player_button(ui, icons::REWIND, 22.0, "Back 10 seconds (←)").clicked() {
+                        player.seek_relative(-10.0);
+                    }
+                    if play_button(ui, paused).clicked() {
+                        player.set_paused(!paused);
+                    }
+                    if player_button(ui, icons::FAST_FORWARD, 22.0, "Forward 10 seconds (→)")
+                        .clicked()
+                    {
+                        player.seek_relative(10.0);
+                    }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let (fs_icon, fs_tip) = if fullscreen {
-                        (icons::CORNERS_IN, "Exit fullscreen (F)")
-                    } else {
-                        (icons::CORNERS_OUT, "Fullscreen (F)")
-                    };
-                    if player_button(ui, fs_icon, 22.0, fs_tip).clicked() {
-                        toggle_fullscreen(ui.ctx());
-                    }
-                    ui.add_space(4.0);
-                    track_menu(ui, player, np, TrackKind::Subtitle);
-                    track_menu(ui, player, np, TrackKind::Audio);
-                    ui.add_space(8.0);
-                    let (volume, r) = line_slider(ui, 96.0, player.volume(), 130.0, "Volume");
-                    if r.on_hover_text(format!("Volume {volume:.0}%")).changed() {
-                        player.set_volume(volume);
-                    }
-                    let muted = player.muted();
-                    let icon = if muted || volume < 1.0 {
-                        icons::SPEAKER_SLASH
-                    } else {
-                        icons::SPEAKER_HIGH
-                    };
-                    if player_button(ui, icon, 21.0, "Mute (M)").clicked() {
-                        player.set_muted(!muted);
-                    }
-                });
-            });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (fs_icon, fs_tip) = if fullscreen {
+                            (icons::CORNERS_IN, "Exit fullscreen (F)")
+                        } else {
+                            (icons::CORNERS_OUT, "Fullscreen (F)")
+                        };
+                        if player_button(ui, fs_icon, 22.0, fs_tip).clicked() {
+                            toggle_fullscreen(ui.ctx());
+                        }
+                        ui.add_space(4.0);
+                        track_menu(ui, player, np, TrackKind::Subtitle);
+                        track_menu(ui, player, np, TrackKind::Audio);
+                        ui.add_space(8.0);
+                        let (volume, r) = line_slider(ui, 96.0, player.volume(), 130.0, "Volume");
+                        if r.on_hover_text(format!("Volume {volume:.0}%")).changed() {
+                            player.set_volume(volume);
+                        }
+                        let muted = player.muted();
+                        let icon = if muted || volume < 1.0 {
+                            icons::SPEAKER_SLASH
+                        } else {
+                            icons::SPEAKER_HIGH
+                        };
+                        if player_button(ui, icon, 21.0, "Mute (M)").clicked() {
+                            player.set_muted(!muted);
+                        }
+                    });
+                },
+            );
         },
     );
 }
@@ -483,9 +492,9 @@ fn player_button(ui: &mut egui::Ui, icon: &str, size: f32, tooltip: &str) -> egu
     ui.painter()
         .circle_filled(rect.center(), 19.0, media::GLASS.gamma_multiply(t));
     let color = media::TEXT_WEAK.lerp_to_gamma(media::TEXT, t);
-    ui.painter().text(
+    widgets::icon_centered(
+        ui.painter(),
         rect.center(),
-        egui::Align2::CENTER_CENTER,
         icon,
         theme::icon_font(size),
         color,
@@ -505,18 +514,17 @@ fn play_button(ui: &mut egui::Ui, paused: bool) -> egui::Response {
         22.0 + 1.5 * t,
         media::TEXT.lerp_to_gamma(theme::ramp::N300, t),
     );
-    let (icon, nudge) = if paused {
-        (icons::PLAY, 2.0)
+    if paused {
+        widgets::play_icon(ui.painter(), rect.center(), 22.0, theme::ramp::N950);
     } else {
-        (icons::PAUSE, 0.0)
-    };
-    ui.painter().text(
-        rect.center() + vec2(nudge, 0.0),
-        egui::Align2::CENTER_CENTER,
-        icon,
-        theme::icon_fill_font(22.0),
-        theme::ramp::N950,
-    );
+        widgets::icon_centered(
+            ui.painter(),
+            rect.center(),
+            icons::PAUSE,
+            theme::icon_fill_font(22.0),
+            theme::ramp::N950,
+        );
+    }
     widgets::named(resp, if paused { "Play" } else { "Pause" })
         .on_hover_text("Play/pause (Space)")
         .on_hover_cursor(egui::CursorIcon::PointingHand)

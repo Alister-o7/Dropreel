@@ -403,10 +403,13 @@ fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
                 UiLayout::left_to_right(Align::Center),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.label(
-                        RichText::new(icons::MAGNIFYING_GLASS)
-                            .size(16.0)
-                            .color(p.text_weak),
+                    let (glass, _) = ui.allocate_exact_size(vec2(16.0, 26.0), Sense::hover());
+                    widgets::icon_centered(
+                        ui.painter(),
+                        glass.center(),
+                        icons::MAGNIFYING_GLASS,
+                        theme::icon_font(16.0),
+                        p.text_weak,
                     );
                     let edit = ui.add(
                         egui::TextEdit::singleline(&mut app.filter.search)
@@ -431,15 +434,21 @@ fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
                         edit.request_focus();
                     }
-                    if app.filter.search.is_empty() {
-                        // Nothing to clear; keeps the field's layout steady.
-                        ui.label(RichText::new(" ").size(16.0));
+                    // The clear button's slot is always there, so the field's layout stays steady.
+                    let sense = if app.filter.search.is_empty() {
+                        Sense::hover()
                     } else {
-                        let clear = ui.add(
-                            egui::Label::new(
-                                RichText::new(icons::X_CIRCLE).size(16.0).color(p.text_weak),
-                            )
-                            .sense(Sense::click()),
+                        Sense::click()
+                    };
+                    let (slot, clear) = ui.allocate_exact_size(vec2(18.0, 26.0), sense);
+                    if !app.filter.search.is_empty() {
+                        let color = if clear.hovered() { p.text } else { p.text_weak };
+                        widgets::icon_centered(
+                            ui.painter(),
+                            slot.center(),
+                            icons::X_CIRCLE,
+                            theme::icon_font(16.0),
+                            color,
                         );
                         if widgets::named(clear, "Clear search")
                             .on_hover_text("Clear search")
@@ -493,9 +502,9 @@ fn hero_icon(ui: &mut egui::Ui, icon: &str, size: f32) {
     let painter = ui.painter();
     painter.circle_filled(rect.center(), size * 1.3, p.text.gamma_multiply(0.05));
     painter.circle_filled(rect.center(), size, p.text.gamma_multiply(0.09));
-    painter.text(
+    widgets::icon_centered(
+        painter,
         rect.center(),
-        Align2::CENTER_CENTER,
         icon,
         theme::icon_font(size * 0.9),
         p.text,
@@ -858,9 +867,9 @@ fn card(
             15.0,
             Stroke::new(1.5, media::BUTTON_RIM.gamma_multiply(t)),
         );
-        painter.text(
+        widgets::icon_centered(
+            painter,
             info_center,
-            Align2::CENTER_CENTER,
             icons::INFO,
             theme::icon_font(18.0),
             media::TEXT.gamma_multiply(t),
@@ -959,13 +968,8 @@ fn card(
             media::TRACK,
             5.0,
         );
-        painter.text(
-            center,
-            Align2::CENTER_CENTER,
-            label,
-            theme::font(16.0, "bold"),
-            media::TEXT,
-        );
+        let label = painter.layout_no_wrap(label, theme::font(16.0, "bold"), media::TEXT);
+        widgets::galley_centered(painter, center, label, media::TEXT);
         let caption = if matches!(badge, EncodeBadge::Running(_)) {
             "Re-encoding"
         } else {

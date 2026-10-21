@@ -1,7 +1,7 @@
 //! The movie detail panel on the right.
 
 use eframe::egui::{
-    self, Align, Align2, Color32, Layout, Margin, Rect, RichText, Sense, Stroke, Vec2, pos2, vec2,
+    self, Align, Color32, Layout, Margin, Rect, RichText, Sense, Stroke, Vec2, pos2, vec2,
 };
 
 use super::icons;
@@ -43,7 +43,7 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
             let close_resp = widgets::named(ui.interact(close, ui.scope_id().with("close"), Sense::click()), "Close").on_hover_text("Close");
             let bg = if close_resp.hovered() { media::SCRIM_STRONG } else { media::SCRIM };
             ui.painter().circle_filled(close.center(), 17.0, bg);
-            ui.painter().text(close.center(), Align2::CENTER_CENTER, icons::X, theme::icon_font(18.0), media::TEXT);
+            widgets::icon_centered(ui.painter(), close.center(), icons::X, theme::icon_font(18.0), media::TEXT);
             if close_resp.clicked() {
                 app.actions.push(Action::CloseDetails);
             }
@@ -88,7 +88,8 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
                         }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.menu_button(RichText::new(icons::DOTS_THREE_VERTICAL).size(19.0), |ui| {
+                        let more = widgets::icon_button(ui, icons::DOTS_THREE_VERTICAL, "More");
+                        egui::Popup::menu(&more).show(|ui| {
                             movie_menu(ui, &movie, missing, large, &mut app.actions);
                         });
                         if widgets::icon_button(ui, icons::PENCIL, "Edit title").clicked() {
