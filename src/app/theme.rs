@@ -15,8 +15,6 @@ const INTER_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.
 const INTER_BOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-Bold.ttf");
 const PHOSPHOR: &[u8] = include_bytes!("../../assets/fonts/Phosphor.ttf");
 const PHOSPHOR_FILL: &[u8] = include_bytes!("../../assets/fonts/Phosphor-Fill.ttf");
-pub const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/icon.png");
-pub const APP_ICON_URI: &str = "bytes://dropreel-icon.png";
 /// The white droplet-and-play mark from the logo, on transparent.
 pub const LOGO_MARK_URI: &str = "bytes://dropreel-mark.png";
 /// Illustration for the empty library.
@@ -49,37 +47,60 @@ pub struct Palette {
     pub dark: bool,
 }
 
+/// The "Midnight" scheme: a cool neutral ramp from near-black to white. The interface is built
+/// from these greys alone; white (or, on the light theme, near-black) is the accent, and colour is
+/// left to the posters, the artwork and the three status hues below.
+pub mod ramp {
+    use super::Color32;
+
+    pub const N950: Color32 = Color32::from_rgb(4, 4, 6);
+    pub const N900: Color32 = Color32::from_rgb(10, 10, 13);
+    pub const N850: Color32 = Color32::from_rgb(17, 17, 21);
+    pub const N800: Color32 = Color32::from_rgb(25, 25, 31);
+    pub const N750: Color32 = Color32::from_rgb(35, 35, 43);
+    pub const N700: Color32 = Color32::from_rgb(48, 48, 58);
+    pub const N600: Color32 = Color32::from_rgb(82, 82, 94);
+    pub const N400: Color32 = Color32::from_rgb(170, 170, 182);
+    pub const N300: Color32 = Color32::from_rgb(208, 208, 218);
+    pub const N200: Color32 = Color32::from_rgb(226, 226, 234);
+    pub const N100: Color32 = Color32::from_rgb(240, 240, 245);
+    pub const N50: Color32 = Color32::from_rgb(248, 248, 251);
+    pub const WHITE: Color32 = Color32::WHITE;
+}
+
 pub const DARK: Palette = Palette {
-    bg: Color32::from_rgb(10, 10, 15),
-    surface: Color32::from_rgb(16, 16, 23),
-    raised: Color32::from_rgb(27, 27, 38),
-    hover: Color32::from_rgb(37, 37, 52),
-    input: Color32::from_rgb(21, 21, 30),
-    border: Color32::from_rgb(36, 36, 50),
-    text: Color32::from_rgb(242, 242, 248),
-    text_weak: Color32::from_rgb(140, 140, 162),
-    accent: Color32::from_rgb(244, 244, 250),
-    accent_soft: Color32::from_rgba_premultiplied(18, 18, 18, 18),
-    warn: Color32::from_rgb(251, 176, 59),
-    danger: Color32::from_rgb(244, 63, 94),
-    success: Color32::from_rgb(52, 211, 153),
+    bg: ramp::N950,
+    surface: ramp::N900,
+    raised: ramp::N800,
+    hover: ramp::N750,
+    input: ramp::N850,
+    border: ramp::N700,
+    text: ramp::WHITE,
+    text_weak: ramp::N400,
+    accent: ramp::WHITE,
+    // White at 10%, premultiplied.
+    accent_soft: Color32::from_rgba_premultiplied(26, 26, 26, 26),
+    warn: Color32::from_rgb(255, 196, 64),
+    danger: Color32::from_rgb(255, 99, 99),
+    success: Color32::from_rgb(74, 222, 128),
     dark: true,
 };
 
 pub const LIGHT: Palette = Palette {
-    bg: Color32::from_rgb(246, 246, 251),
-    surface: Color32::from_rgb(255, 255, 255),
-    raised: Color32::from_rgb(239, 239, 247),
-    hover: Color32::from_rgb(228, 228, 240),
-    input: Color32::from_rgb(241, 241, 248),
-    border: Color32::from_rgb(226, 226, 238),
-    text: Color32::from_rgb(18, 18, 30),
-    text_weak: Color32::from_rgb(102, 102, 128),
-    accent: Color32::from_rgb(18, 18, 30),
-    accent_soft: Color32::from_rgba_premultiplied(0, 0, 0, 16),
-    warn: Color32::from_rgb(217, 119, 6),
-    danger: Color32::from_rgb(225, 29, 72),
-    success: Color32::from_rgb(5, 150, 105),
+    bg: ramp::N50,
+    surface: ramp::WHITE,
+    raised: ramp::N100,
+    hover: ramp::N200,
+    input: ramp::N100,
+    border: ramp::N300,
+    text: ramp::N950,
+    text_weak: ramp::N600,
+    accent: ramp::N950,
+    // Black at 7%, premultiplied.
+    accent_soft: Color32::from_rgba_premultiplied(0, 0, 0, 18),
+    warn: Color32::from_rgb(180, 83, 9),
+    danger: Color32::from_rgb(200, 30, 45),
+    success: Color32::from_rgb(21, 128, 61),
     dark: false,
 };
 
@@ -222,11 +243,7 @@ fn style_for(p: &Palette) -> egui::Style {
     v.panel_fill = p.surface;
     v.window_fill = p.surface;
     v.extreme_bg_color = p.input;
-    v.faint_bg_color = if p.dark {
-        Color32::from_rgb(18, 20, 25)
-    } else {
-        Color32::from_rgb(248, 249, 251)
-    };
+    v.faint_bg_color = if p.dark { ramp::N850 } else { ramp::N50 };
     v.window_corner_radius = CornerRadius::same(16);
     v.menu_corner_radius = CornerRadius::same(12);
     v.window_stroke = Stroke::new(1.0, p.border);
@@ -290,7 +307,6 @@ pub fn install(ctx: &egui::Context) {
     install_fonts(ctx);
     ctx.set_style_of(Theme::Dark, style_for(&DARK));
     ctx.set_style_of(Theme::Light, style_for(&LIGHT));
-    ctx.include_bytes(APP_ICON_URI, APP_ICON_PNG);
     ctx.include_bytes(
         LOGO_MARK_URI,
         include_bytes!("../../assets/logo-mark.png").as_slice(),

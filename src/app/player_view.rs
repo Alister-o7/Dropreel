@@ -299,12 +299,8 @@ fn controls(
         pos2(rect.left(), rect.bottom() - BAR_HEIGHT),
         rect.right_bottom(),
     );
-    let bar_alpha = if fullscreen { 180 } else { 255 };
-    painter.rect_filled(
-        bar,
-        0.0,
-        Color32::from_rgba_unmultiplied(10, 10, 15, bar_alpha),
-    );
+    let bar_opacity = if fullscreen { 0.7 } else { 1.0 };
+    painter.rect_filled(bar, 0.0, theme::ramp::N950.gamma_multiply(bar_opacity));
     if show_title {
         let fade = Rect::from_min_max(top.left_top(), pos2(top.right(), top.bottom() + 36.0));
         widgets::vertical_gradient(
@@ -481,7 +477,7 @@ fn play_button(ui: &mut egui::Ui, paused: bool) -> egui::Response {
         egui::Align2::CENTER_CENTER,
         icon,
         theme::icon_fill_font(22.0),
-        Color32::from_rgb(10, 10, 15),
+        theme::ramp::N950,
     );
     widgets::named(resp, if paused { "Play" } else { "Pause" })
         .on_hover_text("Play/pause (Space)")

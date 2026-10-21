@@ -303,7 +303,7 @@ fn kind_colors(p: &Palette, kind: ButtonKind) -> (Color32, Color32) {
     match kind {
         ButtonKind::Primary => (p.text, p.bg),
         ButtonKind::Secondary => (p.raised, p.text),
-        ButtonKind::Warn => (p.warn, Color32::from_rgb(30, 20, 0)),
+        ButtonKind::Warn => (p.warn, if p.dark { p.bg } else { Color32::WHITE }),
         ButtonKind::Danger => (p.danger, Color32::WHITE),
         ButtonKind::Ghost => (Color32::TRANSPARENT, p.text_weak),
     }

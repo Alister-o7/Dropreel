@@ -34,11 +34,7 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             sidebar_glow(ui);
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::Image::new(theme::APP_ICON_URI)
-                        .texture_options(theme::SMOOTH)
-                        .fit_to_exact_size(vec2(32.0, 32.0)),
-                );
+                logo(ui, 32.0);
                 ui.add_space(2.0);
                 ui.label(
                     theme::bold("DropReel")
@@ -152,6 +148,25 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 );
             });
         });
+}
+
+/// The logo's white droplet on a frosted disc (a solid dark disc on the light theme).
+fn logo(ui: &mut egui::Ui, size: f32) {
+    let p = palette(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    let painter = ui.painter();
+    let r = size / 2.0;
+    if p.dark {
+        painter.circle_filled(rect.center(), r, Color32::from_white_alpha(14));
+        painter.circle_filled(rect.center(), r * 0.8, Color32::from_white_alpha(22));
+    } else {
+        painter.circle_filled(rect.center(), r, p.text);
+    }
+    let h = size * 0.56;
+    let mark = Rect::from_center_size(rect.center(), vec2(h * 0.74, h));
+    egui::Image::new(theme::LOGO_MARK_URI)
+        .texture_options(theme::SMOOTH)
+        .paint_at(ui, mark);
 }
 
 /// A faint wash of the brand colours behind the logo at the top of the sidebar.
@@ -724,8 +739,9 @@ fn card(
             Align2::LEFT_TOP,
             Some(icons::LIGHTNING),
             &format_bytes(movie.size),
-            p.warn,
-            Color32::from_rgb(35, 22, 0),
+            // Over a poster: always the bright amber, whatever the theme.
+            theme::DARK.warn,
+            theme::ramp::N950,
         );
     }
     if movie.watched {
@@ -1094,7 +1110,7 @@ pub fn drop_overlay(ctx: &egui::Context) {
     let rect = ctx.content_rect();
     // Aurora backdrop, cropped to cover the window, darkened for contrast.
     let aurora = ctx.try_load_texture(theme::AURORA_URI, theme::SMOOTH, egui::SizeHint::default());
-    painter.rect_filled(rect, 0.0, Color32::from_rgb(8, 8, 12));
+    painter.rect_filled(rect, 0.0, theme::ramp::N950);
     if let Ok(egui::load::TexturePoll::Ready { texture }) = aurora {
         painter.image(
             texture.id,
