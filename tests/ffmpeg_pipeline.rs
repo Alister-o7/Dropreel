@@ -6,7 +6,7 @@ use dropreel::encode::args::{self, EncodeSpec};
 use dropreel::encode::{Encoder, EncoderDetector, plan, verify};
 use dropreel::library::Db;
 use dropreel::library::import::{LibraryEnv, run_import};
-use dropreel::metadata::{probe, thumbnail};
+use dropreel::metadata::{self, probe, thumbnail};
 use dropreel::settings::{EncoderChoice, Settings};
 use dropreel::tools::{self, Tools};
 
@@ -168,4 +168,50 @@ fn import_probe_thumbnail_and_reencode() {
     assert_eq!(encoded.video.unwrap().codec, "hevc");
     assert_eq!(encoded.audio.len(), 1, "audio copied");
     assert_eq!(encoded.subtitles.len(), 1, "subtitles copied");
+}
+
+#[test]
+fn small_frame_posters_are_regrabbed_at_the_movies_width() {
+    let Some(tools) = tools_or_skip() else { return };
+    let ffmpeg = tools.ffmpeg.clone().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let clip = make_clip(&ffmpeg, dir.path());
+    let posters = dir.path().join("posters");
+    std::fs::create_dir_all(&posters).unwrap();
+    let env = LibraryEnv {
+        db_path: dir.path().join("library.db"),
+        posters_dir: posters.clone(),
+        tools: tools.clone(),
+        tmdb_key: String::new(),
+    };
+    run_import(&env, std::slice::from_ref(&clip), true, &|_| {}, &|| {}).unwrap();
+    let db = Db::open(&env.db_path).unwrap();
+    let movie = db.all_movies().unwrap().remove(0);
+    let grabbed = movie.poster.clone().unwrap();
+    assert!(metadata::is_frame_poster(&grabbed));
+    // A 320-pixel clip is grabbed at its own width, not blown up.
+    assert_eq!(image::image_dimensions(&grabbed).unwrap().0, 320);
+
+    // An older version's smaller frame...
+    let old = posters.join(format!("{}-frame-1.jpg", movie.id));
+    let status = tools::command(&ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(&grabbed)
+        .args(["-vf", "scale=160:-2"])
+        .arg(&old)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    db.set_poster(movie.id, Some(&old)).unwrap();
+
+    // ...is grabbed again at the movie's width, and the old file goes away.
+    let refreshed = std::cell::Cell::new(0);
+    let upgraded =
+        metadata::upgrade_frame_posters(&env, &db, &|| refreshed.set(refreshed.get() + 1));
+    assert_eq!((upgraded, refreshed.get()), (1, 1));
+    let poster = db.movie(movie.id).unwrap().unwrap().poster.unwrap();
+    assert_eq!(image::image_dimensions(&poster).unwrap().0, 320);
+    assert!(!old.exists());
+    // Nothing left to do the next time.
+    assert_eq!(metadata::upgrade_frame_posters(&env, &db, &|| {}), 0);
 }

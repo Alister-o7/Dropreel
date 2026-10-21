@@ -12,6 +12,7 @@ use super::theme::{self, media, palette, radius};
 use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, EncodeBadge};
 use crate::library::{Movie, MovieId};
+use crate::metadata;
 use crate::util::format_bytes;
 
 const MIN_CARD_W: f32 = 158.0;
@@ -815,7 +816,11 @@ fn card(
         RADIUS,
     );
     // A frame from the movie has no title of its own: put one on it, like box art.
-    let title_on_art = poster_shown > 0.0 && widgets::is_frame_poster(movie.poster.as_deref());
+    let title_on_art = poster_shown > 0.0
+        && movie
+            .poster
+            .as_deref()
+            .is_some_and(metadata::is_frame_poster);
     let painter = ui.painter();
 
     if t > 0.01 && encode.is_none() {

@@ -8,6 +8,10 @@ use crate::tools;
 /// build with zimg; if that fails we fall back to a plain grab.
 const TONEMAP: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,";
 
+/// Frame posters are grabbed this wide (narrower videos keep their own width), enough for the
+/// library's banner and the details panel.
+pub const FRAME_WIDTH: u32 = 1280;
+
 /// Writes a JPEG frame from about 10% into the movie to `out`.
 pub fn grab_frame(
     ffmpeg: &Path,
@@ -46,7 +50,7 @@ pub fn grab_frame(
                 "-frames:v",
                 "1",
                 "-vf",
-                &format!("{filter}scale=480:-2"),
+                &format!("{filter}scale='min({FRAME_WIDTH},iw)':-2"),
                 "-q:v",
                 "3",
                 "-f",

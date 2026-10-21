@@ -270,6 +270,7 @@ impl DropReelApp {
         }
         app.warn_about_missing_tools();
         app.restart_watcher();
+        jobs::upgrade_posters(app.env(), app.events.clone());
         // Pick up files added to watched folders while DropReel was closed, and find moved files.
         if !app.settings.watched_folders.is_empty() {
             app.start_import(app.settings.watched_folders.clone(), false);

@@ -59,13 +59,6 @@ pub fn paint_poster(
     shown
 }
 
-/// Whether a poster is a frame grabbed from the movie (rather than real artwork from TMDb).
-pub fn is_frame_poster(poster: Option<&Path>) -> bool {
-    poster
-        .and_then(|p| p.file_name())
-        .is_some_and(|name| name.to_string_lossy().contains("-frame-"))
-}
-
 fn paint_placeholder(ui: &Ui, rect: Rect, title: &str, dim: bool, radius: u8) {
     let (top, bottom) = (theme::ramp::N700, theme::ramp::N850);
     let (top, bottom) = if dim {
