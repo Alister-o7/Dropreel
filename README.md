@@ -15,19 +15,22 @@ window and they join your library; click a poster and it plays right there. Movi
 - **Drag & drop library** — drop files or whole folders (`mkv mp4 m4v avi mov wmv webm ts m2ts`).
   Duplicates are skipped, and a movie that was moved or renamed is found again by its
   fingerprint. Watched folders import new movies automatically.
-- **Built-in player** (libmpv) — seek bar, audio and subtitle tracks, volume, fullscreen,
-  keyboard shortcuts, and **resume** where you left off. Movies are marked watched at 95%.
+- **Built-in player** (libmpv) — the video fills the window and the controls float over it,
+  fading once the mouse rests (after 2.5 s by default, adjustable, paused or not). Seek bar,
+  audio and subtitle tracks, volume, fullscreen, keyboard shortcuts, and **resume** where you
+  left off. Movies are marked watched at 95%.
 - **Re-encode to HEVC** — for files over the limit (5 GB by default): a preview with the
   expected size, then a background encode with progress, ETA and cancel. Uses your GPU (NVENC →
   AMF → Quick Sync) when available, otherwise x265. Audio and subtitles are copied untouched,
   HDR10 metadata is kept, and the result is verified before the original is touched. Afterwards
   you choose: keep the original, move it to the Recycle Bin, or delete it.
-- **Organise** — poster grid or list, search, sort, shelves (Continue watching, Unwatched,
-  Large files…) and your own tags (right-click a tag in the sidebar, or use *Settings → Tags*,
-  to rename or delete it).
-- **Posters & metadata** — a frame from the movie by default; optionally from
-  [TMDb](https://www.themoviedb.org) with an API key. Works fully offline.
-- Dark and light themes.
+- **Organise** — poster grid or list with a featured banner for the movie you were last
+  watching (or the newest one), search, sort, shelves (Continue watching, Unwatched, Large
+  files…) and your own tags, which you can rename, merge and delete.
+- **Posters & metadata** — a frame from the movie by default (up to 1280 px wide, with the title
+  across the bottom like box art); optionally from [TMDb](https://www.themoviedb.org) with an
+  API key. Works fully offline.
+- **A dark, Netflix-style look** with one brick-red accent, plus a light theme.
 
 | Movie details | Re-encode preview |
 |---|---|
@@ -68,12 +71,10 @@ You can also point DropReel at your own `ffmpeg`/`ffprobe` in **Settings**, or h
 | Add movies | Drag files/folders onto the window, or **Add movies** / **Add folder** |
 | Play | Click a poster (or double-click a row in list view) |
 | Details, tags, re-encode | Hover a poster → ⓘ, or right-click it |
+| Rename or delete a tag | Right-click it in the sidebar, or *Settings → Tags* |
 | Play/pause · seek ±10 s · volume · mute | `Space` · `←` `→` · `↑` `↓` · `M` |
 | Fullscreen | `F` or double-click the video; `Esc` leaves fullscreen, then returns to the library |
 | Search | `Ctrl+F` |
-
-During playback the controls and pointer fade once the mouse rests, paused or not; set how long
-in *Settings → Player*.
 
 The installer also adds DropReel to Explorer's **Open with** menu for video files; opening a
 movie that way plays it (and adds it to the library if it's new).
@@ -123,8 +124,8 @@ with ffmpeg once, and cache them under `target/`.
 | Suite | What it covers |
 |---|---|
 | `tests/library.rs` | Importing every supported container from nested folders, junk and partial files, duplicates, concurrent imports, moved/missing/removed files, Locate…, folder watching, search/sort/shelves/tags |
-| `tests/player.rs` | Real libmpv, headless: loading, resume, pause, seeking, end of file, audio/subtitle tracks, volume, unplayable files, smooth motion |
-| `tests/ui.rs` | The whole app driven through its accessibility tree with egui_kittest: drag & drop, search, details, removal, settings, playback controls, resume prompt, keyboard shortcuts, track menus, "Open with" |
+| `tests/player.rs` | Real libmpv, headless: loading, resume, pause, seeking (including before a file has finished opening), end of file, truncated files, audio/subtitle tracks, volume, unplayable files, smooth motion |
+| `tests/ui.rs` | The whole app driven through its accessibility tree with egui_kittest: drag & drop, search, details, removal, settings, renaming and deleting tags, small windows, playback controls, resume prompt, keyboard shortcuts, track menus, "Open with" |
 | `tests/ffmpeg_pipeline.rs`, `tests/encode_queue.rs` | Probing, thumbnails, real HEVC encodes and verification |
 
 Suites skip themselves when ffmpeg or libmpv can't be found. Point `DROPREEL_LIBMPV` at
