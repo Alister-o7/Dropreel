@@ -11,9 +11,9 @@ use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, OriginalChoice, PreviewDialog};
 use crate::encode::{EncodeOutcome, EncodePreview, Encoder};
 use crate::library::import::ImportReport;
-use crate::library::{Movie, MovieId};
+use crate::library::{Movie, MovieId, Tag, TagId};
 use crate::metadata::tmdb::TmdbMovie;
-use crate::settings::{EncoderChoice, Settings, ThemeChoice, X265_PRESETS};
+use crate::settings::{EncoderChoice, HIDE_CONTROLS_RANGE, Settings, ThemeChoice, X265_PRESETS};
 use crate::tools::Tools;
 use crate::util::{format_bytes, format_duration};
 
@@ -21,6 +21,13 @@ pub struct EditDialog {
     movie_id: MovieId,
     title: String,
     year: String,
+    focused: bool,
+}
+
+pub struct RenameTagDialog {
+    tag_id: TagId,
+    old_name: String,
+    name: String,
     focused: bool,
 }
 
@@ -40,6 +47,8 @@ pub struct Dialogs {
     pub edit: Option<EditDialog>,
     pub tmdb: Option<TmdbDialog>,
     pub confirm_remove: Option<MovieId>,
+    pub rename_tag: Option<RenameTagDialog>,
+    pub confirm_delete_tag: Option<TagId>,
     /// Text of the "New tag" field in the detail panel.
     pub new_tag: String,
     /// Second step of "Delete permanently" after an encode.
@@ -57,6 +66,15 @@ impl Dialogs {
             movie_id: movie.id,
             title: movie.title.clone(),
             year: movie.year.map(|y| y.to_string()).unwrap_or_default(),
+            focused: false,
+        });
+    }
+
+    pub fn open_rename_tag(&mut self, tag: &Tag) {
+        self.rename_tag = Some(RenameTagDialog {
+            tag_id: tag.id,
+            old_name: tag.name.clone(),
+            name: tag.name.clone(),
             focused: false,
         });
     }
@@ -105,6 +123,8 @@ pub fn show(app: &mut DropReelApp, ctx: &egui::Context) {
     edit_dialog(app, ctx);
     tmdb_dialog(app, ctx);
     remove_dialog(app, ctx);
+    rename_tag_dialog(app, ctx);
+    delete_tag_dialog(app, ctx);
     resume_dialog(app, ctx);
     encode_preview_dialog(app, ctx);
     encode_finished_dialog(app, ctx);
@@ -314,7 +334,18 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
             ui.checkbox(&mut draft.high_quality_video, "High-quality video scaling")
                 .on_hover_text("mpv's sharper scalers. Turn this off if videos show only a black picture.");
             ui.checkbox(&mut draft.smooth_motion, "Smooth motion")
-                .on_hover_text("Syncs video to your monitor's refresh rate and blends frames, so pans don't judder. Turn this off if playback looks worse.");
+                .on_hover_text("Syncs video to your monitor's refresh rate and blends frames, so pans don't judder. On some displays it makes playback look worse.");
+            ui.horizontal(|ui| {
+                let label = ui.label("Hide the controls after");
+                let seconds = egui::DragValue::new(&mut draft.hide_controls_after)
+                    .range(HIDE_CONTROLS_RANGE)
+                    .speed(0.1)
+                    .fixed_decimals(1)
+                    .suffix(" s");
+                ui.add(seconds)
+                    .labelled_by(label.id)
+                    .on_hover_text("How long the mouse can rest during playback before the controls and pointer fade away. Moving the mouse brings them back.");
+            });
             if app.software_gl {
                 ui.label(RichText::new("Your PC is using software OpenGL, so simple scaling is always used and smooth motion is off.").size(12.5).color(p.text_weak));
             }
@@ -330,13 +361,20 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
 
             if !app.lib.tags.is_empty() {
                 settings_section(ui, icons::TAG, "Tags");
-                ui.horizontal_wrapped(|ui| {
-                    for tag in &app.lib.tags {
-                        if widgets::button(ui, ButtonKind::Secondary, Some(icons::TRASH), &tag.name).on_hover_text("Delete this tag").clicked() {
-                            app.actions.push(Action::DeleteTag(tag.id));
-                        }
-                    }
-                });
+                for tag in &app.lib.tags {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&tag.name).color(p.text));
+                        ui.label(RichText::new(app.lib.tag_count(tag.id).to_string()).size(12.0).color(p.text_weak));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if widgets::icon_button(ui, icons::TRASH, &format!("Delete tag {}", tag.name)).clicked() {
+                                app.actions.push(Action::AskDeleteTag(tag.id));
+                            }
+                            if widgets::icon_button(ui, icons::PENCIL, &format!("Rename tag {}", tag.name)).clicked() {
+                                app.actions.push(Action::AskRenameTag(tag.id));
+                            }
+                        });
+                    });
+                }
             }
 
             ui.add_space(10.0);
@@ -627,6 +665,93 @@ fn remove_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
     });
     if done || close {
         app.dialogs.confirm_remove = None;
+    }
+}
+
+fn rename_tag_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
+    let Some(d) = app.dialogs.rename_tag.as_mut() else {
+        return;
+    };
+    let p = palette(ctx);
+    let mut done = false;
+    let ((), close) = modal(ctx, "rename_tag", 400.0, |ui| {
+        header(ui, icons::TAG, p.accent, "Rename tag", Some(&d.old_name));
+        let edit = ui.add(
+            egui::TextEdit::singleline(&mut d.name)
+                .desired_width(f32::INFINITY)
+                .margin(Margin::symmetric(10, 7)),
+        );
+        if !d.focused {
+            edit.request_focus();
+            d.focused = true;
+        }
+        let name = d.name.trim();
+        // Another tag already has this name: saving merges the two.
+        if let Some(other) = app
+            .lib
+            .tags
+            .iter()
+            .find(|t| t.id != d.tag_id && t.name.eq_ignore_ascii_case(name))
+        {
+            ui.label(
+                RichText::new(format!(
+                    "{} \"{}\" already exists. Saving merges the two tags.",
+                    icons::INFO,
+                    other.name
+                ))
+                .color(p.text_weak),
+            );
+        }
+        let valid = !name.is_empty() && name != d.old_name;
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        footer(ui, |ui| {
+            if widgets::button_sized(ui, ButtonKind::Primary, None, "Rename", 90.0, valid).clicked()
+                || (enter && valid)
+            {
+                app.actions
+                    .push(Action::RenameTag(d.tag_id, name.to_string()));
+                done = true;
+            }
+            done |= widgets::button(ui, ButtonKind::Secondary, None, "Cancel").clicked();
+        });
+    });
+    if done || close {
+        app.dialogs.rename_tag = None;
+    }
+}
+
+fn delete_tag_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
+    let Some(id) = app.dialogs.confirm_delete_tag else {
+        return;
+    };
+    let p = palette(ctx);
+    let name = app
+        .lib
+        .tags
+        .iter()
+        .find(|t| t.id == id)
+        .map(|t| t.name.clone())
+        .unwrap_or_default();
+    let count = app.lib.tag_count(id);
+    let mut done = false;
+    let ((), close) = modal(ctx, "confirm_delete_tag", 400.0, |ui| {
+        header(ui, icons::TRASH, p.danger, "Delete tag?", None);
+        let movies = match count {
+            0 => "No movies have it.".to_string(),
+            1 => "It is removed from 1 movie, which stays in your library.".to_string(),
+            n => format!("It is removed from {n} movies, which stay in your library."),
+        };
+        ui.label(RichText::new(format!("\"{name}\" will be deleted. {movies}")).color(p.text_weak));
+        footer(ui, |ui| {
+            if widgets::button(ui, ButtonKind::Danger, Some(icons::TRASH), "Delete tag").clicked() {
+                app.actions.push(Action::DeleteTag(id));
+                done = true;
+            }
+            done |= widgets::button(ui, ButtonKind::Secondary, None, "Cancel").clicked();
+        });
+    });
+    if done || close {
+        app.dialogs.confirm_delete_tag = None;
     }
 }
 

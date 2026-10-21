@@ -473,6 +473,37 @@ impl Db {
             .query_row("SELECT id FROM tags WHERE name = ?1", [name], |r| r.get(0))?)
     }
 
+    /// Renames a tag. Renaming it to another tag's name (ignoring case) merges the two: its movies
+    /// join that tag and this one goes away. Returns the tag that now has the name.
+    pub fn rename_tag(&self, id: TagId, name: &str) -> anyhow::Result<TagId> {
+        let name = name.trim();
+        if name.is_empty() {
+            bail!("tag names cannot be empty");
+        }
+        let other: Option<TagId> = self
+            .conn
+            .query_row(
+                "SELECT id FROM tags WHERE name = ?1 AND id != ?2",
+                params![name, id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(other) = other else {
+            self.conn
+                .execute("UPDATE tags SET name = ?2 WHERE id = ?1", params![id, name])?;
+            return Ok(id);
+        };
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO movie_tags (movie_id, tag_id)
+             SELECT movie_id, ?2 FROM movie_tags WHERE tag_id = ?1",
+            [id, other],
+        )?;
+        tx.execute("DELETE FROM tags WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(other)
+    }
+
     pub fn delete_tag(&self, id: TagId) -> anyhow::Result<()> {
         self.conn.execute("DELETE FROM tags WHERE id = ?1", [id])?;
         Ok(())
@@ -620,5 +651,34 @@ mod tests {
         assert!(db.movie_tags().unwrap().is_empty());
         assert_eq!(db.ignored_paths().unwrap(), vec![PathBuf::from("C:/a.mkv")]);
         assert_eq!(db.all_tags().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn renaming_a_tag_to_an_existing_name_merges_them() {
+        let db = Db::open_in_memory().unwrap();
+        let a = db.insert_movie(&sample("C:/a.mkv", "fa")).unwrap();
+        let b = db.insert_movie(&sample("C:/b.mkv", "fb")).unwrap();
+        let scifi = db.create_tag("Sci-Fi").unwrap();
+        let space = db.create_tag("Space").unwrap();
+        db.set_movie_tag(a, scifi, true).unwrap();
+        db.set_movie_tag(a, space, true).unwrap();
+        db.set_movie_tag(b, space, true).unwrap();
+
+        // A plain rename keeps the tag and its movies.
+        assert_eq!(db.rename_tag(scifi, "  Science fiction ").unwrap(), scifi);
+        assert_eq!(db.all_tags().unwrap()[0].name, "Science fiction");
+        assert!(db.rename_tag(scifi, " ").is_err());
+
+        // Renaming "Space" to an existing name (any case) moves its movies there.
+        assert_eq!(db.rename_tag(space, "science FICTION").unwrap(), scifi);
+        let tags = db.all_tags().unwrap();
+        assert_eq!(tags.len(), 1);
+        let links = db.movie_tags().unwrap();
+        assert_eq!(links[&a], BTreeSet::from([scifi]));
+        assert_eq!(links[&b], BTreeSet::from([scifi]));
+
+        db.delete_tag(scifi).unwrap();
+        assert!(db.all_tags().unwrap().is_empty());
+        assert!(db.movie_tags().unwrap().is_empty());
     }
 }

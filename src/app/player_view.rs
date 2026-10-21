@@ -15,7 +15,6 @@ use crate::util::format_duration;
 /// How often the playback position is saved while playing.
 const SAVE_INTERVAL: Duration = Duration::from_secs(10);
 /// Controls hide after this long without mouse movement (fullscreen only).
-const HIDE_CONTROLS_AFTER: Duration = Duration::from_millis(2500);
 /// How long after a file loads its playback stats are first logged.
 const DIAGNOSTICS_AFTER: Duration = Duration::from_secs(20);
 /// Height of the control bar. In a window the video sits above it; in fullscreen it overlays.
@@ -96,6 +95,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
         now_playing,
         actions,
         db,
+        settings,
         ..
     } = app;
     let (Ok(player), Some(np)) = (player.as_mut(), now_playing.as_mut()) else {
@@ -160,8 +160,9 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
         np.last_activity = Instant::now();
     }
     let paused = player.paused();
-    let recently_active =
-        paused || np.controls_hovered || np.last_activity.elapsed() < HIDE_CONTROLS_AFTER;
+    // Paused or not, the controls fade once the mouse has rested for the chosen time.
+    let hide_after = Duration::from_secs_f64(settings.hide_controls_after);
+    let recently_active = np.controls_hovered || np.last_activity.elapsed() < hide_after;
     // The controls sit over the video and fade out when the mouse rests, windowed or not.
     // They stay laid out while faded, so a click right after the mouse moves still lands.
     let controls_opacity =

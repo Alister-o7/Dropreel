@@ -56,6 +56,11 @@ pub enum Action {
     Remove(MovieId),
     SetTag(MovieId, TagId, bool),
     CreateTag(MovieId, String),
+    /// Asks for a new name for a tag.
+    AskRenameTag(TagId),
+    RenameTag(TagId, String),
+    /// Asks before deleting a tag.
+    AskDeleteTag(TagId),
     DeleteTag(TagId),
     SetWatched(MovieId, bool),
     EditTitle(MovieId),
@@ -566,8 +571,28 @@ impl DropReelApp {
                     .and_then(|tag| self.db.set_movie_tag(movie, tag, true));
                 self.db_result(r);
             }
+            Action::AskRenameTag(tag) => {
+                if let Some(t) = self.lib.tags.iter().find(|t| t.id == tag) {
+                    self.dialogs.open_rename_tag(t);
+                }
+            }
+            Action::RenameTag(tag, name) => {
+                let r = self.db.rename_tag(tag, &name).map(|kept| {
+                    // If it merged into another tag, the shelf follows it.
+                    if self.filter.tag == Some(tag) {
+                        self.filter.tag = Some(kept);
+                        self.filter_dirty = true;
+                    }
+                });
+                self.db_result(r);
+            }
+            Action::AskDeleteTag(tag) => self.dialogs.confirm_delete_tag = Some(tag),
             Action::DeleteTag(tag) => {
                 let r = self.db.delete_tag(tag);
+                if r.is_ok() && self.filter.tag == Some(tag) {
+                    self.filter.tag = None;
+                    self.filter_dirty = true;
+                }
                 self.db_result(r);
             }
             Action::SetWatched(id, on) => {

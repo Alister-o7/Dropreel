@@ -120,19 +120,27 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 .show(ui, |ui| {
                     for tag in &app.lib.tags {
                         let selected = app.filter.tag == Some(tag.id);
-                        if widgets::nav_item(
+                        let item = widgets::nav_item(
                             ui,
                             icons::TAG,
                             &tag.name,
                             Some(app.lib.tag_count(tag.id)),
                             selected,
                         )
-                        .clicked()
-                        {
+                        .on_hover_text("Right-click to rename or delete");
+                        if item.clicked() {
                             app.filter.tag = if selected { None } else { Some(tag.id) };
                             app.filter.shelf = Shelf::All;
                             app.filter_dirty = true;
                         }
+                        item.context_menu(|ui| {
+                            if menu_item(ui, icons::PENCIL, "Rename…") {
+                                app.actions.push(Action::AskRenameTag(tag.id));
+                            }
+                            if menu_item(ui, icons::TRASH, "Delete tag…") {
+                                app.actions.push(Action::AskDeleteTag(tag.id));
+                            }
+                        });
                     }
                 });
 

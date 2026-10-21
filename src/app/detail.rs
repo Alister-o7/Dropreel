@@ -218,6 +218,7 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
                             .desired_width(ui.available_width() - 90.0)
                             .margin(Margin::symmetric(10, 6)),
                     );
+                    ui.ctx().accesskit_node_builder(edit.id, |node| node.set_label("New tag"));
                     let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let name = app.dialogs.new_tag.trim().to_string();
                     let add = widgets::button_sized(ui, ButtonKind::Secondary, Some(icons::PLUS), "Add", 0.0, !name.is_empty()).clicked();

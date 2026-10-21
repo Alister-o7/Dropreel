@@ -23,7 +23,8 @@ window and they join your library; click a poster and it plays right there. Movi
   HDR10 metadata is kept, and the result is verified before the original is touched. Afterwards
   you choose: keep the original, move it to the Recycle Bin, or delete it.
 - **Organise** — poster grid or list, search, sort, shelves (Continue watching, Unwatched,
-  Large files…) and your own tags.
+  Large files…) and your own tags (right-click a tag in the sidebar, or use *Settings → Tags*,
+  to rename or delete it).
 - **Posters & metadata** — a frame from the movie by default; optionally from
   [TMDb](https://www.themoviedb.org) with an API key. Works fully offline.
 - Dark and light themes.
@@ -71,6 +72,9 @@ You can also point DropReel at your own `ffmpeg`/`ffprobe` in **Settings**, or h
 | Fullscreen | `F` or double-click the video; `Esc` leaves fullscreen, then returns to the library |
 | Search | `Ctrl+F` |
 
+During playback the controls and pointer fade once the mouse rests, paused or not; set how long
+in *Settings → Player*.
+
 The installer also adds DropReel to Explorer's **Open with** menu for video files; opening a
 movie that way plays it (and adds it to the library if it's new).
 
@@ -81,8 +85,8 @@ and `logs`.
 
 - **Black picture but sound plays** — turn off *Settings → Player → High-quality video
   scaling*. On software OpenGL (VMs, remote desktop) simple scaling is used automatically.
-- **Choppy or juddery playback** — *Settings → Player → Smooth motion* (on by default) syncs
-  video to your monitor's refresh rate and blends frames. Each playback writes a
+- **Choppy or juddery playback** — try *Settings → Player → Smooth motion* (off by default): it
+  syncs video to your monitor's refresh rate and blends frames. Each playback writes a
   `playback stats:` line to the log (decoder, dropped/late frames, render times) — attach it to a
   bug report.
 - **mpv diagnostics** — set `DROPREEL_MPV_LOG=C:\path\mpv.log` before starting DropReel to get
