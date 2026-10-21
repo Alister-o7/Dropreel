@@ -14,7 +14,7 @@ const INTER_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.
 const INTER_BOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-Bold.ttf");
 const PHOSPHOR: &[u8] = include_bytes!("../../assets/fonts/Phosphor.ttf");
 const PHOSPHOR_FILL: &[u8] = include_bytes!("../../assets/fonts/Phosphor-Fill.ttf");
-/// The white droplet-and-play mark from the logo, on transparent.
+/// The logo mark: a white droplet with a brick-red play triangle, on transparent.
 pub const LOGO_MARK_URI: &str = "bytes://dropreel-mark.png";
 /// Illustration for the empty library.
 pub const EMPTY_ART_URI: &str = "bytes://dropreel-empty.jpg";
