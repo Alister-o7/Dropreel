@@ -220,7 +220,7 @@ pub struct Player {
     render: *mut ffi::mpv_render_context,
     // Kept alive for as long as mpv may call back into them.
     _get_proc: Option<Box<GetProcAddress>>,
-    _wake_ctx: Box<egui::Context>,
+    _waker: Box<Waker>,
     target: Option<RenderTarget>,
     /// mpv's own values for the options in SIMPLE_SCALING, to restore high-quality scaling.
     default_scaling: Vec<(&'static str, String)>,
@@ -235,10 +235,37 @@ unsafe extern "C" fn get_proc_address(ctx: *mut c_void, name: *const c_char) -> 
     get(unsafe { CStr::from_ptr(name) }) as *mut c_void
 }
 
+/// Wakes the UI when mpv has news. mpv calls back from its own threads while holding its own
+/// locks, and egui's `request_repaint` takes egui's context lock: if the UI thread held that lock
+/// while waiting on mpv, each would wait for the other. So the callback only signals a channel,
+/// and a thread of our own asks egui to repaint.
+struct Waker {
+    tx: crossbeam_channel::Sender<()>,
+}
+
+impl Waker {
+    fn new(ctx: egui::Context) -> Self {
+        // One pending wake is enough: the next frame picks up everything that happened.
+        let (tx, rx) = crossbeam_channel::bounded::<()>(1);
+        let spawned = std::thread::Builder::new()
+            .name("mpv-wake".into())
+            .spawn(move || {
+                // Ends when the Player, and with it the sender, is dropped.
+                for () in rx {
+                    ctx.request_repaint();
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::error!("could not start the mpv wake-up thread: {e}");
+        }
+        Self { tx }
+    }
+}
+
 unsafe extern "C" fn wake_up(ctx: *mut c_void) {
-    // SAFETY: ctx is the boxed egui::Context owned by the Player. request_repaint is thread-safe,
-    // and mpv forbids calling mpv functions here, which we don't.
-    unsafe { &*(ctx as *const egui::Context) }.request_repaint();
+    // SAFETY: ctx is the boxed Waker owned by the Player, which outlives mpv's callbacks.
+    // try_send never blocks, and mpv forbids calling mpv functions here, which we don't.
+    let _ = unsafe { &*(ctx as *const Waker) }.tx.try_send(());
 }
 
 fn cstr(s: &str) -> CString {
@@ -281,7 +308,7 @@ impl Player {
         };
         player.check(rc, "create the mpv OpenGL renderer")?;
         player.render = render;
-        let wake = &*player._wake_ctx as *const egui::Context as *mut c_void;
+        let wake = &*player._waker as *const Waker as *mut c_void;
         unsafe { (player.lib.render_context_set_update_callback)(render, Some(wake_up), wake) };
         Ok(player)
     }
@@ -308,7 +335,7 @@ impl Player {
             handle,
             render: std::ptr::null_mut(),
             _get_proc: get_proc,
-            _wake_ctx: Box::new(ctx),
+            _waker: Box::new(Waker::new(ctx)),
             target: None,
             default_scaling: Vec::new(),
             state: PlaybackState::default(),
@@ -366,7 +393,7 @@ impl Player {
             player.observe(id, name, format);
         }
 
-        let wake = &*player._wake_ctx as *const egui::Context as *mut c_void;
+        let wake = &*player._waker as *const Waker as *mut c_void;
         unsafe { (lib.set_wakeup_callback)(handle, Some(wake_up), wake) };
         Ok(player)
     }
