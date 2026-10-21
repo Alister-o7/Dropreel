@@ -743,7 +743,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "dropreel"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "blake3",
@@ -759,6 +759,7 @@ dependencies = [
  "libloading 0.9.0",
  "notify",
  "opener",
+ "raw-window-handle",
  "rayon",
  "reqwest",
  "rfd",
@@ -773,6 +774,7 @@ dependencies = [
  "trash",
  "walkdir",
  "which",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 

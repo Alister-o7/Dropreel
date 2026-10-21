@@ -280,8 +280,10 @@ impl DropReelApp {
 
     fn apply_video_quality(&mut self) {
         let high = self.settings.high_quality_video && !self.software_gl;
+        let smooth = self.settings.smooth_motion && !self.software_gl;
         if let Ok(player) = self.player.as_mut() {
             player.set_high_quality_scaling(high);
+            player.set_smooth_motion(smooth);
         }
     }
 
@@ -706,6 +708,7 @@ impl DropReelApp {
                 np.title,
                 player.position()
             );
+            tracing::info!("playback stats: {}", player.diagnostics());
         }
         self.save_playback_position(finished);
         if let Ok(player) = self.player.as_mut() {

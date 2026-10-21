@@ -311,8 +311,10 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
             settings_section(ui, icons::MONITOR_PLAY, "Player");
             ui.checkbox(&mut draft.high_quality_video, "High-quality video scaling")
                 .on_hover_text("mpv's sharper scalers. Turn this off if videos show only a black picture.");
+            ui.checkbox(&mut draft.smooth_motion, "Smooth motion")
+                .on_hover_text("Syncs video to your monitor's refresh rate and blends frames, so pans don't judder. Turn this off if playback looks worse.");
             if app.software_gl {
-                ui.label(RichText::new("Your PC is using software OpenGL, so simple scaling is always used.").size(12.5).color(p.text_weak));
+                ui.label(RichText::new("Your PC is using software OpenGL, so simple scaling is always used and smooth motion is off.").size(12.5).color(p.text_weak));
             }
             if let Err(e) = &app.player {
                 ui.label(RichText::new(format!("{} Built-in player unavailable: {e}", icons::WARNING)).color(p.danger));

@@ -77,6 +77,10 @@ and `logs`.
 
 - **Black picture but sound plays** — turn off *Settings → Player → High-quality video
   scaling*. On software OpenGL (VMs, remote desktop) simple scaling is used automatically.
+- **Choppy or juddery playback** — *Settings → Player → Smooth motion* (on by default) syncs
+  video to your monitor's refresh rate and blends frames. Each playback writes a
+  `playback stats:` line to the log (decoder, dropped/late frames, render times) — attach it to a
+  bug report.
 - **mpv diagnostics** — set `DROPREEL_MPV_LOG=C:\path\mpv.log` before starting DropReel to get
   mpv's own log; `DROPREEL_MPV_OPTS="hwdec=no,scale=bilinear"` passes extra mpv options.
 - **Re-encode didn't fit under the limit** — GPU encoders aim close to the target but can

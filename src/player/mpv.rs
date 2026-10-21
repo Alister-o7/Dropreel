@@ -4,6 +4,7 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use eframe::glow::{self, HasContext as _};
@@ -152,6 +153,60 @@ impl PlaybackState {
     }
 }
 
+/// Frame-pacing numbers for the log, collected since the current file was loaded.
+#[derive(Default)]
+struct RenderStats {
+    last_frame: Option<Instant>,
+    frames: u64,
+    /// UI frames that took noticeably longer than one display refresh.
+    late_frames: u64,
+    longest_frame: Duration,
+    renders: u64,
+    render_time: Duration,
+    longest_render: Duration,
+}
+
+impl RenderStats {
+    fn frame(&mut self, refresh_interval: Duration, playing: bool) {
+        let now = Instant::now();
+        if let Some(prev) = self.last_frame.replace(now)
+            && playing
+        {
+            let dt = now - prev;
+            // Gaps longer than a second are pauses or window moves, not stutter.
+            if dt < Duration::from_secs(1) {
+                self.frames += 1;
+                self.longest_frame = self.longest_frame.max(dt);
+                if dt > refresh_interval.mul_f64(1.5) {
+                    self.late_frames += 1;
+                }
+            }
+        }
+    }
+
+    fn rendered(&mut self, took: Duration) {
+        self.renders += 1;
+        self.render_time += took;
+        self.longest_render = self.longest_render.max(took);
+    }
+
+    fn summary(&self) -> String {
+        let avg_render = if self.renders > 0 {
+            self.render_time.as_secs_f64() * 1000.0 / self.renders as f64
+        } else {
+            0.0
+        };
+        format!(
+            "ui frames {} (late {}, longest {:.1} ms), mpv renders {} (avg {avg_render:.2} ms, longest {:.1} ms)",
+            self.frames,
+            self.late_frames,
+            self.longest_frame.as_secs_f64() * 1000.0,
+            self.renders,
+            self.longest_render.as_secs_f64() * 1000.0,
+        )
+    }
+}
+
 struct RenderTarget {
     fbo: glow::Framebuffer,
     texture: glow::Texture,
@@ -170,6 +225,8 @@ pub struct Player {
     /// mpv's own values for the options in SIMPLE_SCALING, to restore high-quality scaling.
     default_scaling: Vec<(&'static str, String)>,
     state: PlaybackState,
+    display_fps: Option<f64>,
+    stats: RenderStats,
 }
 
 unsafe extern "C" fn get_proc_address(ctx: *mut c_void, name: *const c_char) -> *mut c_void {
@@ -206,6 +263,8 @@ impl Player {
             target: None,
             default_scaling: Vec::new(),
             state: PlaybackState::default(),
+            display_fps: None,
+            stats: RenderStats::default(),
         };
         for (name, value) in [
             ("vo", "libmpv"),
@@ -220,6 +279,9 @@ impl Player {
             ("ytdl", "no"),
             ("sub-auto", "fuzzy"),
             ("audio-display", "no"),
+            // We render without blocking (see `render`), so mpv must hand over each frame at its
+            // display time rather than ahead of it.
+            ("video-timing-offset", "0"),
         ] {
             player.option(name, value);
         }
@@ -402,6 +464,62 @@ impl Player {
         }
     }
 
+    /// Smooth motion: sync video to the display refresh (resampling audio to match) and blend
+    /// frames, which removes the judder of e.g. 24 fps films on a 60 Hz screen. Needs the
+    /// refresh rate from `set_display_fps`; without it mpv keeps timing video to audio.
+    pub fn set_smooth_motion(&mut self, on: bool) {
+        self.set_string("video-sync", if on { "display-resample" } else { "audio" });
+        self.set_string("interpolation", if on { "yes" } else { "no" });
+    }
+
+    /// Tells mpv the refresh rate of the monitor the video is on.
+    pub fn set_display_fps(&mut self, fps: Option<f64>) {
+        let changed = match (self.display_fps, fps) {
+            (Some(a), Some(b)) => (a - b).abs() > 0.01,
+            (a, b) => a.is_some() != b.is_some(),
+        };
+        if changed {
+            self.display_fps = fps;
+            tracing::info!("display refresh rate: {fps:?} Hz");
+            self.set_string(
+                "display-fps-override",
+                &format!("{:.4}", fps.unwrap_or(0.0)),
+            );
+        }
+    }
+
+    /// One log line describing decoding and frame timing, for diagnosing choppy playback.
+    pub fn diagnostics(&self) -> String {
+        let props = [
+            "hwdec-current",
+            "video-sync",
+            "interpolation",
+            "display-fps",
+            "estimated-display-fps",
+            "container-fps",
+            "vsync-ratio",
+            "vsync-jitter",
+            "frame-drop-count",
+            "decoder-frame-drop-count",
+            "vo-delayed-frame-count",
+            "mistimed-frame-count",
+            "video-params/pixelformat",
+            "dwidth",
+            "dheight",
+            "osd-width",
+            "osd-height",
+        ];
+        let mut parts: Vec<String> = props
+            .iter()
+            .map(|name| {
+                let value = self.get_string(name).unwrap_or_else(|| "-".into());
+                format!("{name}={value}")
+            })
+            .collect();
+        parts.push(self.stats.summary());
+        parts.join(", ")
+    }
+
     // ----- playback -----
 
     /// Starts playing `path`, optionally from `start` seconds.
@@ -415,6 +533,7 @@ impl Player {
         self.state.position = start;
         self.state.duration = None;
         self.state.eof = false;
+        self.stats = RenderStats::default();
         self.command(&["loadfile", &path.to_string_lossy(), "replace"])
     }
 
@@ -562,10 +681,13 @@ impl Player {
         size: [i32; 2],
     ) -> Option<egui::TextureId> {
         let size = [size[0].max(1), size[1].max(1)];
-        // Called once per displayed frame: tells mpv the previous frame reached the screen, so
-        // it can time frames against the display's refresh (the UI repaints every vsync while
-        // playing).
+        // Called once per displayed frame: tells mpv the previous frame reached the screen (eframe
+        // swaps with vsync at the end of each frame), so it can time frames against the display's
+        // refresh. The UI repaints every vsync while playing.
         unsafe { (self.lib.render_context_report_swap)(self.render) };
+        let refresh = Duration::from_secs_f64(1.0 / self.display_fps.unwrap_or(60.0));
+        self.stats
+            .frame(refresh, !self.state.paused && self.state.position.is_some());
         let resized = self.ensure_target(gl, frame, size).ok()?;
         let target = self.target.as_ref()?;
         let flags = unsafe { (self.lib.render_context_update)(self.render) };
@@ -581,6 +703,9 @@ impl Player {
                 };
                 // Row 0 of the texture is the top of the picture, which is what egui expects.
                 let mut flip: c_int = 0;
+                // Never wait inside the UI frame for the frame's display time: that wait plus
+                // egui's own vsync wait made frames miss refreshes, worst at high resolutions.
+                let mut block: c_int = 0;
                 let mut params = [
                     ffi::mpv_render_param {
                         kind: ffi::MPV_RENDER_PARAM_OPENGL_FBO,
@@ -591,11 +716,17 @@ impl Player {
                         data: &mut flip as *mut _ as *mut c_void,
                     },
                     ffi::mpv_render_param {
+                        kind: ffi::MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME,
+                        data: &mut block as *mut _ as *mut c_void,
+                    },
+                    ffi::mpv_render_param {
                         kind: ffi::MPV_RENDER_PARAM_INVALID,
                         data: std::ptr::null_mut(),
                     },
                 ];
+                let started = Instant::now();
                 (self.lib.render_context_render)(self.render, params.as_mut_ptr());
+                self.stats.rendered(started.elapsed());
                 gl.bind_framebuffer(
                     glow::FRAMEBUFFER,
                     NonZeroU32::new(previous as u32).map(glow::NativeFramebuffer),

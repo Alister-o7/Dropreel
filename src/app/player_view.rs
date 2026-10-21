@@ -8,13 +8,15 @@ use super::icons;
 use super::theme;
 use super::{Action, DropReelApp};
 use crate::library::MovieId;
-use crate::player::{Player, PlayerEvent, Track, TrackKind};
+use crate::player::{Player, PlayerEvent, RefreshRate, Track, TrackKind};
 use crate::util::format_duration;
 
 /// How often the playback position is saved while playing.
 const SAVE_INTERVAL: Duration = Duration::from_secs(10);
 /// Controls hide after this long without mouse movement (fullscreen only).
 const HIDE_CONTROLS_AFTER: Duration = Duration::from_millis(2500);
+/// How long after a file loads its playback stats are first logged.
+const DIAGNOSTICS_AFTER: Duration = Duration::from_secs(20);
 /// Height of the control bar. In a window the video sits above it; in fullscreen it overlays.
 const BAR_HEIGHT: f32 = 104.0;
 /// Fraction of the movie after which it counts as watched.
@@ -32,6 +34,9 @@ pub struct NowPlaying {
     tracks: Vec<Track>,
     loaded: bool,
     pub watched_marked: bool,
+    refresh: RefreshRate,
+    /// When to write the first playback stats to the log (once decoding has settled).
+    diagnostics_at: Option<Instant>,
 }
 
 impl NowPlaying {
@@ -47,6 +52,8 @@ impl NowPlaying {
             tracks: Vec::new(),
             loaded: false,
             watched_marked: false,
+            refresh: RefreshRate::default(),
+            diagnostics_at: None,
         }
     }
 }
@@ -100,6 +107,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
             PlayerEvent::FileLoaded => {
                 np.loaded = true;
                 np.tracks = player.tracks();
+                np.diagnostics_at = Some(Instant::now() + DIAGNOSTICS_AFTER);
             }
             PlayerEvent::TracksChanged => np.tracks = player.tracks(),
             PlayerEvent::Error(e) => {
@@ -110,6 +118,12 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 return;
             }
         }
+    }
+
+    player.set_display_fps(np.refresh.poll(frame));
+    if np.diagnostics_at.is_some_and(|t| Instant::now() >= t) {
+        np.diagnostics_at = None;
+        tracing::info!("playback stats: {}", player.diagnostics());
     }
 
     let pos = player.position();

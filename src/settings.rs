@@ -67,6 +67,8 @@ pub struct Settings {
     pub theme: ThemeChoice,
     /// mpv's high-quality scalers. Turn off if video shows black on an unusual graphics driver.
     pub high_quality_video: bool,
+    /// Sync video to the display refresh and blend frames (mpv's display-resample + interpolation).
+    pub smooth_motion: bool,
 }
 
 impl Default for Settings {
@@ -81,6 +83,7 @@ impl Default for Settings {
             threshold_gb: 5.0,
             theme: ThemeChoice::Dark,
             high_quality_video: true,
+            smooth_motion: true,
         }
     }
 }
