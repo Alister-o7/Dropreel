@@ -122,8 +122,8 @@ fn modal<R>(
     let frame = egui::Frame::new()
         .fill(p.surface)
         .stroke(egui::Stroke::new(1.0, p.border))
-        .corner_radius(18)
-        .inner_margin(Margin::same(24))
+        .corner_radius(20)
+        .inner_margin(Margin::same(26))
         .shadow(ctx.global_style().visuals.window_shadow);
     let resp = egui::Modal::new(Id::unique(id))
         .frame(frame)
@@ -144,7 +144,7 @@ fn header(ui: &mut egui::Ui, icon: &str, color: Color32, title: &str, subtitle: 
         ui.painter().circle_filled(
             rect.center(),
             22.0,
-            color.gamma_multiply(if p.dark { 0.22 } else { 0.14 }),
+            color.gamma_multiply(if p.dark { 0.16 } else { 0.10 }),
         );
         ui.painter().text(
             rect.center(),

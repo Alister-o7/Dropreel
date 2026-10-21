@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon-512.png" width="112" alt="DropReel logo"></p>
+
 # DropReel
 
 [![Windows](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml/badge.svg)](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml)
@@ -31,6 +33,8 @@ window and they join your library; click a poster and it plays right there. Movi
 | ![Details](docs/screenshots/details.jpg) | ![Preview](docs/screenshots/reencode-preview.jpg) |
 | **Re-encode finished** | **Player** |
 | ![Finished](docs/screenshots/reencode-finished.jpg) | ![Player](docs/screenshots/player.jpg) |
+| **Light theme** | **Drop to add** |
+| ![Light theme](docs/screenshots/light-theme.jpg) | ![Drop overlay](docs/screenshots/drop.jpg) |
 
 ## Install
 

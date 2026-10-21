@@ -17,6 +17,8 @@ use crate::util::format_bytes;
 const MIN_CARD_W: f32 = 158.0;
 const TEXT_H: f32 = 48.0;
 const GAP: f32 = 20.0;
+/// Poster corner radius in the grid.
+const RADIUS: u8 = 14;
 
 pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
     let p = palette(ui.ctx());
@@ -30,12 +32,22 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
         .exact_size(236.0)
         .frame(frame)
         .show(ui, |ui| {
+            sidebar_glow(ui);
             ui.horizontal(|ui| {
-                ui.add(egui::Image::new(theme::APP_ICON_URI).fit_to_exact_size(vec2(30.0, 30.0)));
+                ui.add(
+                    egui::Image::new(theme::APP_ICON_URI)
+                        .texture_options(theme::SMOOTH)
+                        .fit_to_exact_size(vec2(32.0, 32.0)),
+                );
                 ui.add_space(2.0);
-                ui.label(theme::bold("DropReel").size(19.0).color(p.text));
+                ui.label(
+                    theme::bold("DropReel")
+                        .size(20.0)
+                        .color(p.text)
+                        .extra_letter_spacing(-0.3),
+                );
             });
-            ui.add_space(14.0);
+            ui.add_space(18.0);
             let width = ui.available_width();
             if widgets::button_sized(
                 ui,
@@ -131,7 +143,8 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 let total = app.lib.movies.len();
                 ui.label(
                     RichText::new(format!(
-                        "{total} movies · {}",
+                        "{}  {total} movies · {}",
+                        icons::HARD_DRIVES,
                         format_bytes(app.lib.total_size())
                     ))
                     .size(12.0)
@@ -139,6 +152,28 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 );
             });
         });
+}
+
+/// A faint wash of the brand colours behind the logo at the top of the sidebar.
+fn sidebar_glow(ui: &egui::Ui) {
+    let p = palette(ui.ctx());
+    if !p.dark {
+        return;
+    }
+    let panel = ui.max_rect().expand2(vec2(14.0, 16.0));
+    let glow = Rect::from_min_size(panel.min, vec2(panel.width(), 190.0));
+    let painter = ui.painter();
+    egui::Image::new(theme::AURORA_URI)
+        .texture_options(theme::SMOOTH)
+        .uv(Rect::from_min_max(pos2(0.0, 0.18), pos2(0.4, 0.62)))
+        .tint(Color32::WHITE.gamma_multiply(0.22))
+        .paint_at(ui, glow);
+    widgets::vertical_gradient(
+        painter,
+        Rect::from_min_max(pos2(glow.left(), glow.top() + 40.0), glow.right_bottom()),
+        Color32::TRANSPARENT,
+        p.surface,
+    );
 }
 
 /// The encode queue status card at the bottom of the sidebar.
@@ -191,7 +226,7 @@ fn queue_card(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 egui::Label::new(RichText::new(&status.title).size(12.5).color(p.text_weak))
                     .truncate(),
             );
-            widgets::progress_bar(ui, status.fraction, p.accent, 6.0);
+            widgets::progress_bar(ui, status.fraction, 6.0);
             ui.label(
                 RichText::new(encode_progress_text(&status))
                     .size(12.0)
@@ -242,12 +277,13 @@ pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 Some(tag) => format!("{} {}", icons::TAG, tag.name),
                 None => app.filter.shelf.label().to_string(),
             };
-            ui.label(theme::bold(title).size(24.0).color(p.text));
             ui.label(
-                RichText::new(app.visible.len().to_string())
-                    .size(15.0)
-                    .color(p.text_weak),
+                theme::bold(title)
+                    .size(26.0)
+                    .color(p.text)
+                    .extra_letter_spacing(-0.4),
             );
+            widgets::chip(ui, None, &app.visible.len().to_string());
 
             ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
                 if widgets::icon_button(ui, icons::GEAR, "Settings").clicked() {
@@ -307,8 +343,9 @@ pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                     app.filter_dirty = true;
                 }
                 ui.add_space(6.0);
-                // Leave room for the title on narrow windows.
-                let search_w = (ui.available_width() - 260.0).clamp(120.0, 250.0);
+                // Takes what the title leaves over, up to a comfortable width.
+                // (The frame's margins take another 28 points.)
+                let search_w = (ui.available_width() - 32.0).clamp(64.0, 250.0);
                 search_box(app, ui, search_w);
                 if app.imports_running > 0 {
                     ui.add_space(8.0);
@@ -339,10 +376,10 @@ fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
         Stroke::new(1.0, p.border)
     };
     egui::Frame::new()
-        .fill(p.input)
+        .fill(if focused { p.input } else { p.raised })
         .stroke(stroke)
         .corner_radius(255)
-        .inner_margin(Margin::symmetric(12, 4))
+        .inner_margin(Margin::symmetric(14, 5))
         .show(ui, |ui| {
             // The toolbar lays out right-to-left; the search box itself reads left-to-right.
             ui.allocate_ui_with_layout(
@@ -361,11 +398,17 @@ fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {
                             .frame(egui::Frame::NONE)
                             .hint_text(if width > 200.0 {
                                 "Search movies  (Ctrl+F)"
-                            } else {
+                            } else if width > 110.0 {
                                 "Search"
+                            } else {
+                                ""
                             })
                             .desired_width(width - 54.0),
                     );
+                    // The hint is hidden when the box is narrow, so name it explicitly.
+                    ui.ctx().accesskit_node_builder(edit.id, |node| {
+                        node.set_label("Search movies");
+                    });
                     if edit.changed() {
                         app.filter_dirty = true;
                     }
@@ -417,34 +460,44 @@ pub fn central(app: &mut DropReelApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The empty-library illustration. Its edges fade to the dark theme's background; on the light
+/// theme it sits in a rounded card.
+fn hero_art(ui: &mut egui::Ui, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.743), Sense::hover());
+    egui::Image::new(theme::EMPTY_ART_URI)
+        .texture_options(theme::SMOOTH)
+        .corner_radius(24)
+        .paint_at(ui, rect);
+}
+
+/// A large gradient disc with an icon and a soft glow, for empty screens.
 fn hero_icon(ui: &mut egui::Ui, icon: &str, size: f32) {
     let p = palette(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size * 2.8), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size * 2.6), Sense::hover());
     let painter = ui.painter();
-    // A soft glow: fading rings around the accent disc.
-    for (scale, alpha) in [(1.4, 0.06), (1.25, 0.10), (1.12, 0.16)] {
-        painter.circle_filled(rect.center(), size * scale, p.accent.gamma_multiply(alpha));
-    }
-    painter.circle_filled(rect.center(), size, p.accent);
+    painter.circle_filled(rect.center(), size * 1.3, p.text.gamma_multiply(0.05));
+    painter.circle_filled(rect.center(), size, p.text.gamma_multiply(0.09));
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
         icon,
-        theme::icon_fill_font(size * 0.95),
-        Color32::WHITE,
+        theme::icon_font(size * 0.9),
+        p.text,
     );
 }
 
 fn empty_state(app: &mut DropReelApp, ui: &mut egui::Ui) {
     let p = palette(ui.ctx());
     ui.vertical_centered(|ui| {
-        ui.add_space((ui.available_height() / 2.0 - 190.0).max(30.0));
-        hero_icon(ui, icons::POPCORN, 58.0);
-        ui.add_space(18.0);
+        let art_w = (ui.available_height() * 0.62).clamp(220.0, 420.0);
+        ui.add_space((ui.available_height() / 2.0 - art_w * 0.375 - 150.0).max(10.0));
+        hero_art(ui, art_w);
+        ui.add_space(10.0);
         ui.label(
             theme::bold("Your library is empty")
-                .size(28.0)
-                .color(p.text),
+                .size(30.0)
+                .color(p.text)
+                .extra_letter_spacing(-0.5),
         );
         ui.add_space(4.0);
         ui.label(
@@ -453,7 +506,7 @@ fn empty_state(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 .color(p.text_weak),
         );
         ui.add_space(20.0);
-        let total_w = 320.0;
+        let total_w = 290.0;
         ui.allocate_ui_with_layout(
             vec2(total_w, 36.0),
             UiLayout::left_to_right(Align::Center),
@@ -490,13 +543,10 @@ fn empty_state(app: &mut DropReelApp, ui: &mut egui::Ui) {
 fn no_results(ui: &mut egui::Ui) {
     let p = palette(ui.ctx());
     ui.vertical_centered(|ui| {
-        ui.add_space((ui.available_height() / 2.0 - 80.0).max(30.0));
-        ui.label(
-            RichText::new(icons::MAGNIFYING_GLASS)
-                .size(44.0)
-                .color(p.text_weak),
-        );
-        ui.label(theme::semibold("No movies here").size(18.0).color(p.text));
+        ui.add_space((ui.available_height() / 2.0 - 120.0).max(30.0));
+        hero_icon(ui, icons::MAGNIFYING_GLASS, 34.0);
+        ui.add_space(6.0);
+        ui.label(theme::bold("No movies here").size(20.0).color(p.text));
         ui.label(RichText::new("Try another search, shelf or tag.").color(p.text_weak));
     });
 }
@@ -580,12 +630,12 @@ fn card(
 
     if t > 0.0 {
         let shadow = egui::Shadow {
-            offset: [0, 12],
-            blur: 28,
+            offset: [0, 14],
+            blur: 32,
             spread: 0,
-            color: Color32::from_black_alpha((110.0 * t) as u8),
+            color: Color32::from_black_alpha((120.0 * t) as u8),
         };
-        painter.add(shadow.as_shape(poster, 12));
+        painter.add(shadow.as_shape(poster, RADIUS));
     }
     widgets::paint_poster(
         ui,
@@ -593,44 +643,37 @@ fn card(
         movie.poster.as_deref(),
         &movie.title,
         missing,
-        12,
+        RADIUS,
     );
     let painter = ui.painter();
 
     if t > 0.01 && encode.is_none() {
+        let r = f32::from(RADIUS);
         let lower = Rect::from_min_max(
-            pos2(poster.left(), poster.center().y),
-            pos2(poster.right(), poster.bottom() - 12.0),
+            pos2(poster.left(), poster.top() + poster.height() * 0.4),
+            pos2(poster.right(), poster.bottom() - r),
         );
         widgets::vertical_gradient(
             painter,
             lower,
             Color32::TRANSPARENT,
-            Color32::from_black_alpha((170.0 * t) as u8),
+            Color32::from_black_alpha((180.0 * t) as u8),
         );
         painter.rect_filled(
             Rect::from_min_max(
-                pos2(poster.left(), poster.bottom() - 12.0),
+                pos2(poster.left(), poster.bottom() - r),
                 poster.right_bottom(),
             ),
             egui::CornerRadius {
                 nw: 0,
                 ne: 0,
-                sw: 12,
-                se: 12,
+                sw: RADIUS,
+                se: RADIUS,
             },
-            Color32::from_black_alpha((170.0 * t) as u8),
+            Color32::from_black_alpha((180.0 * t) as u8),
         );
         if !missing {
-            let r = 22.0 + 4.0 * t;
-            painter.circle_filled(poster.center(), r, p.accent.gamma_multiply(t));
-            painter.text(
-                poster.center() + vec2(2.0, 0.0),
-                Align2::CENTER_CENTER,
-                icons::PLAY,
-                theme::icon_fill_font(r),
-                Color32::WHITE.gamma_multiply(t),
-            );
+            widgets::glass_disc(painter, poster.center(), 22.0 + 4.0 * t, icons::PLAY, t);
         }
         let info_center = info_rect.center() + vec2(0.0, -4.0 * t);
         painter.circle_filled(
@@ -650,12 +693,12 @@ fn card(
         let color = if selected == Some(id) {
             p.accent
         } else {
-            p.accent.gamma_multiply(t)
+            Color32::from_white_alpha(40).gamma_multiply(t)
         };
         painter.rect_stroke(
             poster,
-            12,
-            Stroke::new(2.0, color),
+            RADIUS,
+            Stroke::new(if selected == Some(id) { 2.0 } else { 1.0 }, color),
             egui::StrokeKind::Outside,
         );
     }
@@ -705,15 +748,15 @@ fn card(
             poster.left_bottom() + vec2(10.0, -10.0),
             poster.right_bottom() + vec2(-10.0, -6.0),
         );
-        painter.rect_filled(bar, 2, Color32::from_white_alpha(70));
+        painter.rect_filled(bar, 2, Color32::from_black_alpha(140));
         let mut done = bar;
         done.set_width(bar.width() * (pos / dur).clamp(0.0, 1.0) as f32);
-        painter.rect_filled(done, 2, p.accent2);
+        painter.rect_filled(done, 2, Color32::WHITE);
     }
 
     // Encode overlay
     if let Some(badge) = encode {
-        painter.rect_filled(poster, 12, Color32::from_black_alpha(175));
+        painter.rect_filled(poster, RADIUS, Color32::from_black_alpha(175));
         let (fraction, label) = match badge {
             EncodeBadge::Running(s) => (s.fraction, format!("{:.0}%", s.fraction * 100.0)),
             EncodeBadge::Queued(n) => (0.0, format!("#{}", n + 1)),
@@ -1044,42 +1087,60 @@ pub fn drop_overlay(ctx: &egui::Context) {
     if ctx.input(|i| i.raw.hovered_files.is_empty()) {
         return;
     }
-    let p = palette(ctx);
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         Id::unique("drop_overlay"),
     ));
     let rect = ctx.content_rect();
-    painter.rect_filled(rect, 0.0, Color32::from_black_alpha(200));
+    // Aurora backdrop, cropped to cover the window, darkened for contrast.
+    let aurora = ctx.try_load_texture(theme::AURORA_URI, theme::SMOOTH, egui::SizeHint::default());
+    painter.rect_filled(rect, 0.0, Color32::from_rgb(8, 8, 12));
+    if let Ok(egui::load::TexturePoll::Ready { texture }) = aurora {
+        painter.image(
+            texture.id,
+            rect,
+            widgets::cover_uv(texture.size, rect.size()),
+            Color32::WHITE.gamma_multiply(0.85),
+        );
+    }
+    painter.rect_filled(rect, 0.0, Color32::from_black_alpha(110));
     let inner = rect.shrink(28.0);
-    painter.rect_filled(inner, 24, p.accent.gamma_multiply(0.12));
     painter.rect_stroke(
         inner,
-        24,
-        Stroke::new(3.0, p.accent),
+        28,
+        Stroke::new(2.0, Color32::from_white_alpha(70)),
         egui::StrokeKind::Inside,
     );
     let c = rect.center();
-    painter.circle_filled(c - vec2(0.0, 60.0), 52.0, p.accent);
+    let disc = c - vec2(0.0, 70.0);
+    painter.circle_filled(disc, 74.0, Color32::from_white_alpha(14));
+    painter.circle_filled(disc, 60.0, Color32::from_white_alpha(22));
+    if let Ok(egui::load::TexturePoll::Ready { texture }) = ctx.try_load_texture(
+        theme::LOGO_MARK_URI,
+        theme::SMOOTH,
+        egui::SizeHint::default(),
+    ) {
+        let h = 70.0;
+        let size = vec2(h * texture.size.x / texture.size.y.max(1.0), h);
+        painter.image(
+            texture.id,
+            Rect::from_center_size(disc, size),
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
     painter.text(
-        c - vec2(0.0, 60.0),
-        Align2::CENTER_CENTER,
-        icons::FILM_REEL,
-        theme::icon_fill_font(52.0),
-        Color32::WHITE,
-    );
-    painter.text(
-        c + vec2(0.0, 22.0),
+        c + vec2(0.0, 36.0),
         Align2::CENTER_CENTER,
         "Drop to add to your library",
-        theme::font(30.0, "bold"),
+        theme::font(32.0, "bold"),
         Color32::WHITE,
     );
     painter.text(
-        c + vec2(0.0, 58.0),
+        c + vec2(0.0, 74.0),
         Align2::CENTER_CENTER,
         "Files and whole folders are both fine",
         theme::font(15.0, "regular"),
-        Color32::from_white_alpha(180),
+        Color32::from_white_alpha(190),
     );
 }

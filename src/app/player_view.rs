@@ -303,10 +303,16 @@ fn controls(
     painter.rect_filled(
         bar,
         0.0,
-        Color32::from_rgba_unmultiplied(12, 12, 12, bar_alpha),
+        Color32::from_rgba_unmultiplied(10, 10, 15, bar_alpha),
     );
     if show_title {
-        painter.rect_filled(top, 0.0, Color32::from_black_alpha(150));
+        let fade = Rect::from_min_max(top.left_top(), pos2(top.right(), top.bottom() + 36.0));
+        widgets::vertical_gradient(
+            &painter,
+            fade,
+            Color32::from_black_alpha(170),
+            Color32::TRANSPARENT,
+        );
         painter.text(
             top.left_center() + vec2(20.0, 0.0),
             egui::Align2::LEFT_CENTER,
@@ -324,6 +330,8 @@ fn controls(
         egui::UiBuilder::new().max_rect(bar.shrink2(vec2(16.0, 10.0))),
         |ui| {
             *ui.visuals_mut() = egui::Visuals::dark();
+            ui.visuals_mut().selection.bg_fill = theme::DARK.accent;
+            ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_white_alpha(40);
             ui.spacing_mut().interact_size.y = 26.0;
 
             // Seek bar
@@ -458,11 +466,10 @@ fn play_button(ui: &mut egui::Ui, paused: bool) -> egui::Response {
     let t = ui
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
-    let accent = theme::palette(ui.ctx()).accent;
     ui.painter().circle_filled(
         rect.center(),
-        23.0,
-        accent.lerp_to_gamma(Color32::WHITE, 0.15 * t),
+        22.0 + 1.5 * t,
+        Color32::WHITE.lerp_to_gamma(Color32::from_gray(200), t),
     );
     let (icon, nudge) = if paused {
         (icons::PLAY, 2.0)
@@ -474,7 +481,7 @@ fn play_button(ui: &mut egui::Ui, paused: bool) -> egui::Response {
         egui::Align2::CENTER_CENTER,
         icon,
         theme::icon_fill_font(22.0),
-        Color32::WHITE,
+        Color32::from_rgb(10, 10, 15),
     );
     widgets::named(resp, if paused { "Play" } else { "Pause" })
         .on_hover_text("Play/pause (Space)")

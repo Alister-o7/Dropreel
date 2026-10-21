@@ -77,14 +77,21 @@ pub fn paint_poster(
         },
         top,
     );
-    let icon_size = (rect.width() * 0.26).clamp(14.0, 56.0);
-    painter.text(
-        rect.center() - vec2(0.0, icon_size * 0.45),
-        Align2::CENTER_CENTER,
-        icons::FILM_SLATE,
-        theme::icon_font(icon_size),
-        Color32::from_white_alpha(120),
+    // A soft highlight in the top corner, then the logo's droplet as a watermark.
+    painter.circle_filled(
+        rect.left_top() + rect.size() * vec2(0.2, 0.1),
+        rect.width() * 0.75,
+        Color32::from_white_alpha(10),
     );
+    let icon_size = (rect.width() * 0.26).clamp(14.0, 56.0);
+    let mark = Rect::from_center_size(
+        rect.center() - vec2(0.0, icon_size * 0.45),
+        vec2(icon_size * 0.74, icon_size),
+    );
+    egui::Image::new(theme::LOGO_MARK_URI)
+        .texture_options(theme::SMOOTH)
+        .tint(Color32::from_white_alpha(80))
+        .paint_at(ui, mark);
     if rect.width() > 60.0 {
         let galley = painter.layout(
             title.to_string(),
@@ -113,6 +120,43 @@ pub fn cover_uv(image: Vec2, target: Vec2) -> Rect {
         let h = ia / ta;
         Rect::from_min_max(pos2(0.0, (1.0 - h) / 2.0), pos2(1.0, (1.0 + h) / 2.0))
     }
+}
+
+/// A frosted disc with a white icon, for controls painted over posters and artwork.
+pub fn glass_disc(painter: &egui::Painter, center: Pos2, radius: f32, icon: &str, opacity: f32) {
+    painter.circle_filled(
+        center,
+        radius * 1.25,
+        Color32::from_white_alpha(14).gamma_multiply(opacity),
+    );
+    painter.circle_filled(
+        center,
+        radius,
+        Color32::from_black_alpha(90).gamma_multiply(opacity),
+    );
+    painter.circle_filled(
+        center,
+        radius,
+        Color32::from_white_alpha(34).gamma_multiply(opacity),
+    );
+    painter.circle_stroke(
+        center,
+        radius,
+        Stroke::new(1.0, Color32::from_white_alpha(60).gamma_multiply(opacity)),
+    );
+    // The play triangle looks centred a little right of the true centre.
+    let nudge = if icon == icons::PLAY {
+        radius * 0.08
+    } else {
+        0.0
+    };
+    painter.text(
+        center + vec2(nudge, 0.0),
+        Align2::CENTER_CENTER,
+        icon,
+        theme::icon_fill_font(radius * 0.9),
+        Color32::WHITE.gamma_multiply(opacity),
+    );
 }
 
 /// A rectangle filled with a top-to-bottom gradient.
@@ -177,8 +221,8 @@ pub fn progress_ring(
     painter.add(Shape::line(points, Stroke::new(width, color)));
 }
 
-/// A thin rounded progress bar filling the available width.
-pub fn progress_bar(ui: &mut Ui, fraction: f32, color: Color32, height: f32) -> Response {
+/// A thin rounded progress bar in the text colour, filling the available width.
+pub fn progress_bar(ui: &mut Ui, fraction: f32, height: f32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let p = palette(ui.ctx());
     let r = CornerRadius::same(255);
@@ -186,7 +230,7 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, color: Color32, height: f32) -> 
     let mut done = rect;
     done.set_width(rect.width() * fraction.clamp(0.0, 1.0));
     if done.width() > 0.5 {
-        ui.painter().rect_filled(done, r, color);
+        ui.painter().rect_filled(done, r, p.text);
     }
     resp
 }
@@ -257,7 +301,7 @@ pub enum ButtonKind {
 
 fn kind_colors(p: &Palette, kind: ButtonKind) -> (Color32, Color32) {
     match kind {
-        ButtonKind::Primary => (p.accent, Color32::WHITE),
+        ButtonKind::Primary => (p.text, p.bg),
         ButtonKind::Secondary => (p.raised, p.text),
         ButtonKind::Warn => (p.warn, Color32::from_rgb(30, 20, 0)),
         ButtonKind::Danger => (p.danger, Color32::WHITE),
@@ -301,6 +345,7 @@ pub fn button_sized(
     let bg = match kind {
         ButtonKind::Ghost => Color32::TRANSPARENT.lerp_to_gamma(p.hover, t),
         ButtonKind::Secondary => fill.lerp_to_gamma(p.hover, t),
+        ButtonKind::Primary => fill.lerp_to_gamma(p.text_weak, 0.3 * t),
         _ => fill.lerp_to_gamma(Color32::WHITE, 0.14 * t),
     };
     let (bg, fg_alpha) = if enabled {
@@ -308,7 +353,16 @@ pub fn button_sized(
     } else {
         (bg.gamma_multiply(0.45), 0.5)
     };
-    ui.painter().rect_filled(rect, 9, bg);
+    let radius = CornerRadius::same(10);
+    ui.painter().rect_filled(rect, radius, bg);
+    if kind == ButtonKind::Secondary {
+        ui.painter().rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, p.border.gamma_multiply(1.0 - t)),
+            egui::StrokeKind::Inside,
+        );
+    }
     let pos = rect.center() - galley.size() / 2.0;
     ui.painter()
         .galley_with_override_text_color(pos, galley, fg.gamma_multiply(fg_alpha));
@@ -342,7 +396,12 @@ pub fn nav_item(
     } else {
         Color32::TRANSPARENT.lerp_to_gamma(p.hover, t)
     };
-    ui.painter().rect_filled(rect, 8, bg);
+    ui.painter().rect_filled(rect, 10, bg);
+    if selected {
+        // A short bar marks the current shelf.
+        let bar = Rect::from_center_size(rect.left_center() + vec2(1.5, 0.0), vec2(3.0, 16.0));
+        ui.painter().rect_filled(bar, CornerRadius::same(2), p.text);
+    }
     let fg = if selected {
         p.text
     } else {
@@ -365,13 +424,24 @@ pub fn nav_item(
         fg,
     );
     if let Some(n) = count {
-        ui.painter().text(
-            rect.right_center() - vec2(12.0, 0.0),
-            Align2::RIGHT_CENTER,
+        let galley = ui.painter().layout_no_wrap(
             n.to_string(),
-            theme::font(12.0, "medium"),
-            p.text_weak,
+            theme::font(11.5, "semibold"),
+            if selected { p.text } else { p.text_weak },
         );
+        let badge = Align2::RIGHT_CENTER.anchor_size(
+            rect.right_center() - vec2(8.0, 0.0),
+            vec2((galley.size().x + 12.0).max(22.0), 20.0),
+        );
+        let badge_fill = if selected {
+            p.accent.gamma_multiply(0.16)
+        } else {
+            p.raised
+        };
+        ui.painter()
+            .rect_filled(badge, CornerRadius::same(255), badge_fill);
+        ui.painter()
+            .galley(badge.center() - galley.size() / 2.0, galley, p.text_weak);
     }
     named_selectable(resp, label, selected).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -433,11 +503,17 @@ pub fn chip(ui: &mut Ui, icon: Option<&str>, text: &str) -> Response {
     let galley = ui
         .painter()
         .layout_no_wrap(label, theme::font(12.5, "medium"), p.text_weak);
-    let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(16.0, 8.0), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(18.0, 10.0), Sense::hover());
     ui.painter()
         .rect_filled(rect, CornerRadius::same(255), p.raised);
+    ui.painter().rect_stroke(
+        rect,
+        CornerRadius::same(255),
+        Stroke::new(1.0, p.border),
+        egui::StrokeKind::Inside,
+    );
     ui.painter()
-        .galley(rect.min + vec2(8.0, 4.0), galley, p.text_weak);
+        .galley(rect.min + vec2(9.0, 5.0), galley, p.text_weak);
     resp
 }
 

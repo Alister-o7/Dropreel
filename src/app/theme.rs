@@ -1,10 +1,12 @@
-//! Look and feel: Inter typography, Phosphor icons, and the dark/light palettes.
+//! Look and feel: Inter typography, Phosphor icons, the dark/light palettes and the bundled
+//! artwork. The interface itself is monochrome and high-contrast; colour comes from the posters
+//! and the artwork.
 
 use std::sync::Arc;
 
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, RichText,
-    Shadow, Stroke, TextStyle, Theme, vec2,
+    Shadow, Stroke, TextStyle, TextureOptions, Theme, vec2,
 };
 
 const INTER_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
@@ -15,6 +17,16 @@ const PHOSPHOR: &[u8] = include_bytes!("../../assets/fonts/Phosphor.ttf");
 const PHOSPHOR_FILL: &[u8] = include_bytes!("../../assets/fonts/Phosphor-Fill.ttf");
 pub const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/icon.png");
 pub const APP_ICON_URI: &str = "bytes://dropreel-icon.png";
+/// The white droplet-and-play mark from the logo, on transparent.
+pub const LOGO_MARK_URI: &str = "bytes://dropreel-mark.png";
+/// Illustration for the empty library.
+pub const EMPTY_ART_URI: &str = "bytes://dropreel-empty.jpg";
+/// Soft indigo-to-pink light ribbons, behind the drop overlay and the sidebar header.
+pub const AURORA_URI: &str = "bytes://dropreel-aurora.jpg";
+
+/// Downscaled images (logo, artwork) stay smooth with mipmaps.
+pub const SMOOTH: TextureOptions =
+    TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
 
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
@@ -31,7 +43,6 @@ pub struct Palette {
     pub text_weak: Color32,
     pub accent: Color32,
     pub accent_soft: Color32,
-    pub accent2: Color32,
     pub warn: Color32,
     pub danger: Color32,
     pub success: Color32,
@@ -39,38 +50,36 @@ pub struct Palette {
 }
 
 pub const DARK: Palette = Palette {
-    bg: Color32::from_rgb(13, 14, 18),
-    surface: Color32::from_rgb(20, 22, 28),
-    raised: Color32::from_rgb(30, 33, 41),
-    hover: Color32::from_rgb(40, 44, 55),
-    input: Color32::from_rgb(10, 11, 14),
-    border: Color32::from_rgb(44, 48, 60),
-    text: Color32::from_rgb(236, 237, 242),
-    text_weak: Color32::from_rgb(140, 146, 162),
-    accent: Color32::from_rgb(139, 92, 246),
-    accent_soft: Color32::from_rgba_premultiplied(56, 37, 98, 120),
-    accent2: Color32::from_rgb(236, 72, 153),
-    warn: Color32::from_rgb(245, 158, 11),
-    danger: Color32::from_rgb(239, 68, 68),
-    success: Color32::from_rgb(34, 197, 94),
+    bg: Color32::from_rgb(10, 10, 15),
+    surface: Color32::from_rgb(16, 16, 23),
+    raised: Color32::from_rgb(27, 27, 38),
+    hover: Color32::from_rgb(37, 37, 52),
+    input: Color32::from_rgb(21, 21, 30),
+    border: Color32::from_rgb(36, 36, 50),
+    text: Color32::from_rgb(242, 242, 248),
+    text_weak: Color32::from_rgb(140, 140, 162),
+    accent: Color32::from_rgb(244, 244, 250),
+    accent_soft: Color32::from_rgba_premultiplied(18, 18, 18, 18),
+    warn: Color32::from_rgb(251, 176, 59),
+    danger: Color32::from_rgb(244, 63, 94),
+    success: Color32::from_rgb(52, 211, 153),
     dark: true,
 };
 
 pub const LIGHT: Palette = Palette {
-    bg: Color32::from_rgb(244, 245, 248),
+    bg: Color32::from_rgb(246, 246, 251),
     surface: Color32::from_rgb(255, 255, 255),
-    raised: Color32::from_rgb(238, 239, 244),
-    hover: Color32::from_rgb(226, 228, 236),
-    input: Color32::from_rgb(246, 247, 250),
-    border: Color32::from_rgb(222, 224, 232),
-    text: Color32::from_rgb(20, 22, 30),
-    text_weak: Color32::from_rgb(104, 110, 128),
-    accent: Color32::from_rgb(124, 58, 237),
-    accent_soft: Color32::from_rgba_premultiplied(124, 58, 237, 36),
-    accent2: Color32::from_rgb(219, 39, 119),
+    raised: Color32::from_rgb(239, 239, 247),
+    hover: Color32::from_rgb(228, 228, 240),
+    input: Color32::from_rgb(241, 241, 248),
+    border: Color32::from_rgb(226, 226, 238),
+    text: Color32::from_rgb(18, 18, 30),
+    text_weak: Color32::from_rgb(102, 102, 128),
+    accent: Color32::from_rgb(18, 18, 30),
+    accent_soft: Color32::from_rgba_premultiplied(0, 0, 0, 16),
     warn: Color32::from_rgb(217, 119, 6),
-    danger: Color32::from_rgb(220, 38, 38),
-    success: Color32::from_rgb(22, 163, 74),
+    danger: Color32::from_rgb(225, 29, 72),
+    success: Color32::from_rgb(5, 150, 105),
     dark: false,
 };
 
@@ -218,13 +227,13 @@ fn style_for(p: &Palette) -> egui::Style {
     } else {
         Color32::from_rgb(248, 249, 251)
     };
-    v.window_corner_radius = CornerRadius::same(14);
-    v.menu_corner_radius = CornerRadius::same(10);
+    v.window_corner_radius = CornerRadius::same(16);
+    v.menu_corner_radius = CornerRadius::same(12);
     v.window_stroke = Stroke::new(1.0, p.border);
-    let shadow_alpha = if p.dark { 140 } else { 40 };
+    let shadow_alpha = if p.dark { 160 } else { 36 };
     v.window_shadow = Shadow {
-        offset: [0, 14],
-        blur: 40,
+        offset: [0, 18],
+        blur: 48,
         spread: 0,
         color: Color32::from_black_alpha(shadow_alpha),
     };
@@ -234,11 +243,14 @@ fn style_for(p: &Palette) -> egui::Style {
         spread: 0,
         color: Color32::from_black_alpha(shadow_alpha),
     };
-    v.selection.bg_fill = p.accent;
-    v.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+    // The accent is white (dark theme) or black (light theme): select with a translucent wash
+    // so selected text stays readable.
+    v.selection.bg_fill = p.accent.gamma_multiply(0.3);
+    v.selection.stroke = Stroke::new(1.0, p.text);
+    v.text_cursor.stroke = Stroke::new(2.0, p.accent);
     v.hyperlink_color = p.accent;
     v.slider_trailing_fill = true;
-    v.striped = true;
+    v.striped = false;
 
     let radius = CornerRadius::same(8);
     let w = &mut v.widgets;
@@ -258,9 +270,9 @@ fn style_for(p: &Palette) -> egui::Style {
     w.hovered.fg_stroke = Stroke::new(1.5, p.text);
     w.hovered.corner_radius = radius;
     w.hovered.expansion = 0.0;
-    w.active.bg_fill = p.accent;
+    w.active.bg_fill = p.hover;
     w.active.weak_bg_fill = p.hover;
-    w.active.bg_stroke = Stroke::new(1.0, p.accent);
+    w.active.bg_stroke = Stroke::new(1.0, p.text_weak);
     w.active.fg_stroke = Stroke::new(1.5, p.text);
     w.active.corner_radius = radius;
     w.active.expansion = 0.0;
@@ -273,10 +285,22 @@ fn style_for(p: &Palette) -> egui::Style {
     style
 }
 
-/// Installs fonts, both theme styles and the logo image. Call once at startup.
+/// Installs fonts, both theme styles, the logo and the artwork. Call once at startup.
 pub fn install(ctx: &egui::Context) {
     install_fonts(ctx);
     ctx.set_style_of(Theme::Dark, style_for(&DARK));
     ctx.set_style_of(Theme::Light, style_for(&LIGHT));
     ctx.include_bytes(APP_ICON_URI, APP_ICON_PNG);
+    ctx.include_bytes(
+        LOGO_MARK_URI,
+        include_bytes!("../../assets/logo-mark.png").as_slice(),
+    );
+    ctx.include_bytes(
+        EMPTY_ART_URI,
+        include_bytes!("../../assets/art/empty-library.jpg").as_slice(),
+    );
+    ctx.include_bytes(
+        AURORA_URI,
+        include_bytes!("../../assets/art/aurora.jpg").as_slice(),
+    );
 }

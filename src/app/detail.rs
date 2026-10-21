@@ -42,7 +42,7 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
 
             egui::Frame::new().inner_margin(Margin { left: 22, right: 22, top: 0, bottom: 22 }).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 10.0;
-                ui.add(egui::Label::new(theme::bold(&movie.title).size(25.0).color(p.text)).wrap());
+                ui.add(egui::Label::new(theme::bold(&movie.title).size(26.0).color(p.text).extra_letter_spacing(-0.4)).wrap());
 
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
@@ -112,7 +112,7 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 match &encode {
                     Some(EncodeBadge::Running(status)) => {
                         widgets::callout(ui, p.accent, icons::LIGHTNING, status.stage.label(), |ui| {
-                            widgets::progress_bar(ui, status.fraction, p.accent, 8.0);
+                            widgets::progress_bar(ui, status.fraction, 8.0);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(encode_progress_text(status)).color(p.text_weak));
                                 if let Some(enc) = status.encoder {
@@ -162,28 +162,32 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 }
 
                 widgets::section_label(ui, "Details");
-                egui::Grid::new("detail_info").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
-                    let row = |ui: &mut egui::Ui, icon: &str, label: &str, value: String| {
-                        ui.label(RichText::new(format!("{icon}  {label}")).color(p.text_weak));
-                        ui.add(egui::Label::new(RichText::new(value).color(p.text)).wrap());
+                let info_card = egui::Frame::new().fill(p.bg).stroke(Stroke::new(1.0, p.border)).corner_radius(14).inner_margin(Margin::symmetric(14, 12));
+                info_card.show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    egui::Grid::new("detail_info").num_columns(2).spacing([16.0, 10.0]).striped(false).show(ui, |ui| {
+                        let row = |ui: &mut egui::Ui, icon: &str, label: &str, value: String| {
+                            ui.label(RichText::new(format!("{icon}  {label}")).color(p.text_weak));
+                            ui.add(egui::Label::new(RichText::new(value).color(p.text)).wrap());
+                            ui.end_row();
+                        };
+                        let video = match (&movie.video_codec, movie.width, movie.height) {
+                            (Some(c), Some(w), Some(h)) => format!("{} · {w}×{h}", c.to_uppercase()),
+                            (Some(c), _, _) => c.to_uppercase(),
+                            _ => "unknown".into(),
+                        };
+                        row(ui, icons::MONITOR_PLAY, "Video", video);
+                        row(ui, icons::MUSIC_NOTES, "Audio", tracks_text(&movie.audio_tracks));
+                        row(ui, icons::SUBTITLES, "Subtitles", tracks_text(&movie.subtitle_tracks));
+                        row(ui, icons::PLUS, "Added", format_date(movie.date_added));
+                        row(ui, icons::CLOCK_COUNTER_CLOCKWISE, "Last played", movie.last_played.map(format_date).unwrap_or_else(|| "never".into()));
+                        ui.label(RichText::new(format!("{}  Watched", icons::CHECK_CIRCLE)).color(p.text_weak));
+                        let mut watched = movie.watched;
+                        if ui.checkbox(&mut watched, "").changed() {
+                            app.actions.push(Action::SetWatched(id, watched));
+                        }
                         ui.end_row();
-                    };
-                    let video = match (&movie.video_codec, movie.width, movie.height) {
-                        (Some(c), Some(w), Some(h)) => format!("{} · {w}×{h}", c.to_uppercase()),
-                        (Some(c), _, _) => c.to_uppercase(),
-                        _ => "unknown".into(),
-                    };
-                    row(ui, icons::MONITOR_PLAY, "Video", video);
-                    row(ui, icons::MUSIC_NOTES, "Audio", tracks_text(&movie.audio_tracks));
-                    row(ui, icons::SUBTITLES, "Subtitles", tracks_text(&movie.subtitle_tracks));
-                    row(ui, icons::PLUS, "Added", format_date(movie.date_added));
-                    row(ui, icons::CLOCK_COUNTER_CLOCKWISE, "Last played", movie.last_played.map(format_date).unwrap_or_else(|| "never".into()));
-                    ui.label(RichText::new(format!("{}  Watched", icons::CHECK_CIRCLE)).color(p.text_weak));
-                    let mut watched = movie.watched;
-                    if ui.checkbox(&mut watched, "").changed() {
-                        app.actions.push(Action::SetWatched(id, watched));
-                    }
-                    ui.end_row();
+                    });
                 });
                 ui.add(egui::Label::new(RichText::new(movie.path.display().to_string()).size(11.5).color(p.text_weak).monospace()).wrap())
                     .on_hover_text("File location");
@@ -241,21 +245,18 @@ fn tag_chip(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
     } else {
         name.to_string()
     };
-    let fg = if on { Color32::WHITE } else { p.text };
+    let fg = if on { p.bg } else { p.text };
     let galley = ui
         .painter()
         .layout_no_wrap(label, theme::font(13.0, "medium"), fg);
     let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(20.0, 10.0), Sense::click());
-    let fill = if on {
-        p.accent
-    } else if resp.hovered() {
-        p.hover
+    if on {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(255), p.text);
     } else {
-        p.raised
-    };
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(255), fill);
-    if !on {
+        let fill = if resp.hovered() { p.hover } else { p.raised };
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(255), fill);
         ui.painter().rect_stroke(
             rect,
             egui::CornerRadius::same(255),
