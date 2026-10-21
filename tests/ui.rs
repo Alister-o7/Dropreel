@@ -334,7 +334,10 @@ fn missing_files_are_flagged_after_a_restart() {
     let file = copy_into(&fx.mp4, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, std::slice::from_ref(&file));
-    until(&mut app, "the card", |a| has(a, "Another Film"));
+    // Wait for the whole import (poster included): Windows can't delete a file ffmpeg has open.
+    until(&mut app, "the import to finish", |a| {
+        has_text(a, "Added 1 movie")
+    });
     drop(app);
 
     std::fs::remove_file(&file).unwrap();
@@ -532,7 +535,9 @@ fn unplayable_file_shows_an_error_and_returns_to_the_library() {
     let file = copy_into(&fx.mp4, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, std::slice::from_ref(&file));
-    until(&mut app, "the card", |a| has(a, "Another Film"));
+    until(&mut app, "the import to finish", |a| {
+        has_text(a, "Added 1 movie")
+    });
     // The file is replaced by junk behind DropReel's back.
     std::fs::copy(&fx.garbage, &file).unwrap();
     click(&mut app, "Another Film");
