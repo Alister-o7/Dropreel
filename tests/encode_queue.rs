@@ -10,7 +10,7 @@ use dropreel::encode::{
 };
 use dropreel::library::Db;
 use dropreel::library::import::{LibraryEnv, run_import};
-use dropreel::settings::{EncoderChoice, Settings};
+use dropreel::settings::{EncodeQuality, EncoderChoice, Settings};
 use dropreel::tools::{self, Tools};
 
 fn setup() -> Option<(Tools, Arc<EncoderDetector>)> {
@@ -83,6 +83,8 @@ fn config(db_path: PathBuf, tools: &Tools, clip: &Path) -> EncodeConfig {
         tools: tools.clone(),
         encoder: EncoderChoice::X265,
         x265_preset: "ultrafast".into(),
+        always_ten_bit: false,
+        quality: EncodeQuality::Custom,
         threshold_bytes: threshold,
         target_bytes: threshold * 95 / 100,
     }

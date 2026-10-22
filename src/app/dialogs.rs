@@ -13,7 +13,10 @@ use crate::encode::{EncodeOutcome, EncodePreview, Encoder};
 use crate::library::import::ImportReport;
 use crate::library::{Movie, MovieId, Tag, TagId};
 use crate::metadata::tmdb::TmdbMovie;
-use crate::settings::{EncoderChoice, HIDE_CONTROLS_RANGE, Settings, ThemeChoice, X265_PRESETS};
+use crate::settings::{
+    EncodeQuality, EncoderChoice, HIDE_CONTROLS_RANGE, Settings, ThemeChoice, TimeDisplay,
+    X265_PRESETS,
+};
 use crate::tools::Tools;
 use crate::util::{format_bytes, format_duration};
 
@@ -305,24 +308,43 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
             settings_section(ui, icons::LIGHTNING, "Re-encoding");
             egui::Grid::new("encode_settings").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
                 ui.label("Suggest re-encoding above");
-                ui.add(egui::DragValue::new(&mut draft.threshold_gb).range(1.0..=200.0).speed(0.1).suffix(" GB"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut draft.threshold_gb).range(1.0..=200.0).speed(0.1).suffix(" GB"));
+                    ui.label(RichText::new(format!("Re-encodes aim for about {}", crate::util::format_bytes(draft.target_bytes()))).color(p.text_weak));
+                });
                 ui.end_row();
-                ui.label("Encoder");
-                let combo = egui::ComboBox::from_id_salt("encoder").width(300.0).selected_text(draft.encoder.label()).show_ui(ui, |ui| {
-                    for choice in EncoderChoice::ALL {
-                        ui.selectable_value(&mut draft.encoder, choice, choice.label());
+                ui.label("Quality");
+                ui.horizontal(|ui| {
+                    for quality in EncodeQuality::ALL {
+                        ui.radio_value(&mut draft.quality, quality, quality.label());
                     }
                 });
-                widgets::name_combo(&combo.response, "Encoder");
                 ui.end_row();
-                ui.label("x265 preset");
-                let combo = egui::ComboBox::from_id_salt("x265_preset").selected_text(draft.x265_preset.clone()).show_ui(ui, |ui| {
-                    for preset in X265_PRESETS {
-                        ui.selectable_value(&mut draft.x265_preset, preset.to_string(), preset);
-                    }
+                ui.label("");
+                ui.scope(|ui| {
+                    // Wrap rather than widen the dialog.
+                    ui.set_max_width(440.0);
+                    ui.add(egui::Label::new(RichText::new(draft.quality.description()).size(12.5).color(p.text_weak)).wrap());
                 });
-                widgets::name_combo(&combo.response, "x265 preset");
                 ui.end_row();
+                if draft.quality == EncodeQuality::Custom {
+                    ui.label("Encoder");
+                    let combo = egui::ComboBox::from_id_salt("encoder").width(300.0).selected_text(draft.encoder.label()).show_ui(ui, |ui| {
+                        for choice in EncoderChoice::ALL {
+                            ui.selectable_value(&mut draft.encoder, choice, choice.label());
+                        }
+                    });
+                    widgets::name_combo(&combo.response, "Encoder");
+                    ui.end_row();
+                    ui.label("x265 preset");
+                    let combo = egui::ComboBox::from_id_salt("x265_preset").selected_text(draft.x265_preset.clone()).show_ui(ui, |ui| {
+                        for preset in X265_PRESETS {
+                            ui.selectable_value(&mut draft.x265_preset, preset.to_string(), preset);
+                        }
+                    });
+                    widgets::name_combo(&combo.response, "x265 preset");
+                    ui.end_row();
+                }
             });
             let found = Tools::locate(draft);
             ui.label("ffmpeg");
@@ -345,6 +367,12 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
                 ui.add(seconds)
                     .labelled_by(label.id)
                     .on_hover_text("How long the mouse can rest during playback before the controls and pointer fade away. Moving the mouse brings them back.");
+            });
+            ui.horizontal(|ui| {
+                ui.label("Time shown");
+                for display in TimeDisplay::ALL {
+                    ui.radio_value(&mut draft.time_display, display, display.label());
+                }
             });
             if app.software_gl {
                 ui.label(RichText::new("Your PC is using software OpenGL, so simple scaling is always used and smooth motion is off.").size(12.5).color(p.text_weak));
@@ -904,10 +932,10 @@ fn encode_preview_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
                 .spacing([16.0, 8.0])
                 .show(ui, |ui| {
                     if let Ok(e) = &preview.encoder {
-                        let speed = if *e == Encoder::X265 {
-                            " — slower, best quality per GB"
-                        } else {
-                            " — fast"
+                        let speed = match preview.quality {
+                            EncodeQuality::Best => " — best quality, takes hours",
+                            _ if *e == Encoder::X265 => " — slower, best quality per GB",
+                            _ => " — fast",
                         };
                         stat_row(
                             ui,

@@ -22,6 +22,8 @@ pub struct EncodeSpec<'a> {
     pub encoder: Encoder,
     pub video_kbps: u32,
     pub x265_preset: &'a str,
+    /// Encode in 10-bit even when the source is 8-bit (smoother gradients, less banding).
+    pub always_ten_bit: bool,
     pub video: &'a VideoStream,
     pub hdr: Option<&'a HdrMetadata>,
     /// Codec of each subtitle stream, in order.
@@ -54,7 +56,7 @@ fn video_args(spec: &EncodeSpec<'_>, pass: Pass) -> Vec<OsString> {
             s(format!("{}k", k * 2)),
         ]
     };
-    let ten_bit = spec.video.is_high_bit_depth();
+    let ten_bit = spec.always_ten_bit || spec.video.is_high_bit_depth();
     let mut a: Vec<OsString> = vec![s("-c:v"), s(spec.encoder.ffmpeg_name())];
     match spec.encoder {
         Encoder::X265 => {
@@ -218,6 +220,7 @@ mod tests {
             encoder,
             video_kbps: 4000,
             x265_preset: "medium",
+            always_ten_bit: false,
             video: v,
             hdr,
             subtitle_codecs: subs,
@@ -242,6 +245,18 @@ mod tests {
         assert!(second.contains("-c:a copy -c:s copy"));
         assert!(second.contains("-pix_fmt yuv420p "));
         assert!(second.ends_with("-f matroska out.hevc.mkv.part"));
+    }
+
+    #[test]
+    fn best_quality_encodes_eight_bit_sources_in_ten_bit() {
+        let v = video("yuv420p", None);
+        let mut sp = spec(Encoder::X265, &v, &[], None);
+        sp.always_ten_bit = true;
+        let a = joined(&ffmpeg_args(&sp, Pass::Second));
+        assert!(a.contains("-pix_fmt yuv420p10le"), "{a}");
+        sp.encoder = Encoder::Nvenc;
+        let a = joined(&ffmpeg_args(&sp, Pass::Single));
+        assert!(a.contains("-profile:v main10 -pix_fmt p010le"), "{a}");
     }
 
     #[test]

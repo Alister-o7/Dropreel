@@ -358,8 +358,15 @@ fn settings_are_saved_to_disk() {
     let mut app = launch(root.path(), vec![]);
     click(&mut app, "Settings");
     until(&mut app, "the settings dialog", |a| has(a, "Smooth motion"));
+    // The encoder and x265 preset are only offered for the Custom quality preset.
+    assert!(has(&app, "Fast") && !has(&app, "Encoder"));
+    click(&mut app, "Custom");
+    until(&mut app, "the encoder choice", |a| has(a, "Encoder"));
+    click(&mut app, "Best quality");
+    until(&mut app, "the encoder choice to go", |a| !has(a, "Encoder"));
     // Off on a fresh install; turn it on.
     click(&mut app, "Smooth motion");
+    click(&mut app, "Time left (like Netflix)");
     click(&mut app, "Save");
     until(&mut app, "the dialog to close", |a| {
         !has(a, "Smooth motion")
@@ -368,6 +375,8 @@ fn settings_are_saved_to_disk() {
     assert!(text.contains("smooth_motion = true"), "{text}");
     assert!(text.contains("high_quality_video = true"), "{text}");
     assert!(text.contains("hide_controls_after = 2.5"), "{text}");
+    assert!(text.contains("quality = \"best\""), "{text}");
+    assert!(text.contains("time_display = \"remaining\""), "{text}");
 
     // Cancel throws changes away.
     click(&mut app, "Settings");
@@ -576,6 +585,40 @@ fn keyboard_controls_pause_and_seek() {
     });
     app.key_press(Key::Space);
     until(&mut app, "playing", |a| has(a, "Pause"));
+}
+
+#[test]
+fn time_left_display_counts_down() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("settings.toml"), "time_display = \"remaining\"").unwrap();
+    let file = copy_into(&fx.long, &root.path().join("movies"), None);
+    let mut app = launch(root.path(), vec![]);
+    drop_files(&mut app, &[file]);
+    click(&mut app, "Long Take");
+    until(&mut app, "playing", |a| in_player(a) && has(a, "Pause"));
+    app.key_press(Key::Space);
+    until(&mut app, "paused", |a| has(a, "Play"));
+    run_for(&mut app, Duration::from_millis(300));
+
+    // Only one time is shown, and it is the time left: it shrinks as playback moves forward.
+    let times = |a: &App| {
+        a.root()
+            .children_recursive()
+            .filter(|n| n.accesskit_node().role() == Role::Label)
+            .filter_map(|n| n.accesskit_node().value())
+            .filter(|v| v.contains(':') && v.chars().all(|c| c.is_ascii_digit() || c == ':'))
+            .count()
+    };
+    assert_eq!(times(&app), 1);
+    let left = shown_position(&app).unwrap();
+    assert!(left > 30, "{left} s left of a long clip");
+    app.key_press(Key::ArrowRight);
+    until(&mut app, "10 s less to go", |a| {
+        shown_position(a).is_some_and(|p| p + 9 <= left && p + 11 >= left)
+    });
 }
 
 #[test]

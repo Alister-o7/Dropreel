@@ -16,7 +16,7 @@ use super::progress::ProgressParser;
 use super::{Encoder, EncoderDetector, verify};
 use crate::library::{Db, MovieId, import};
 use crate::metadata::probe;
-use crate::settings::{EncoderChoice, Settings};
+use crate::settings::{EncodeQuality, EncoderChoice, Settings};
 use crate::tools::{self, Tools};
 
 /// Extra free space required on the target drive beyond the planned output size.
@@ -29,6 +29,9 @@ pub struct EncodeConfig {
     pub tools: Tools,
     pub encoder: EncoderChoice,
     pub x265_preset: String,
+    /// Encode 8-bit sources in 10-bit too.
+    pub always_ten_bit: bool,
+    pub quality: EncodeQuality,
     pub threshold_bytes: u64,
     pub target_bytes: u64,
 }
@@ -38,8 +41,10 @@ impl EncodeConfig {
         Self {
             db_path,
             tools,
-            encoder: settings.encoder,
-            x265_preset: settings.x265_preset.clone(),
+            encoder: settings.effective_encoder(),
+            x265_preset: settings.effective_x265_preset().to_string(),
+            always_ten_bit: settings.always_ten_bit(),
+            quality: settings.quality,
             threshold_bytes: settings.threshold_bytes(),
             target_bytes: settings.target_bytes(),
         }
@@ -382,6 +387,7 @@ pub struct EncodePreview {
     pub subtitle_tracks: usize,
     pub plan: Result<EncodePlan, String>,
     pub encoder: Result<Encoder, String>,
+    pub quality: EncodeQuality,
     pub output: PathBuf,
     pub free_space: Option<u64>,
     pub target_bytes: u64,
@@ -445,6 +451,7 @@ pub fn preview(
         subtitle_tracks: media.as_ref().map_or(0, |m| m.subtitles.len()),
         plan,
         encoder,
+        quality: config.quality,
         output: output_path(source),
         free_space: source
             .parent()
@@ -524,6 +531,7 @@ fn run_job(
         encoder,
         video_kbps: plan.video_kbps,
         x265_preset: &config.x265_preset,
+        always_ten_bit: config.always_ten_bit,
         video: &video,
         hdr: hdr.as_ref(),
         subtitle_codecs: &subtitle_codecs,
