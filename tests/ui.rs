@@ -366,7 +366,7 @@ fn settings_are_saved_to_disk() {
     until(&mut app, "the encoder choice to go", |a| !has(a, "Encoder"));
     // Off on a fresh install; turn it on.
     click(&mut app, "Smooth motion");
-    click(&mut app, "Time left (like Netflix)");
+    click(&mut app, "Time left");
     click(&mut app, "Save");
     until(&mut app, "the dialog to close", |a| {
         !has(a, "Smooth motion")

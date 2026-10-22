@@ -87,7 +87,7 @@ impl TimeDisplay {
     pub fn label(self) -> &'static str {
         match self {
             Self::Normal => "Time played and length",
-            Self::Remaining => "Time left (like Netflix)",
+            Self::Remaining => "Time left",
         }
     }
 }

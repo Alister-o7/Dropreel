@@ -17,7 +17,7 @@ window and they join your library; click a poster and it plays right there. Movi
   fingerprint. Watched folders import new movies automatically.
 - **Built-in player** (libmpv) — the video fills the window and the controls float over it,
   fading once the mouse rests (after 2.5 s by default, adjustable, paused or not). The time
-  shows as played and length, or just the time left like Netflix. Seek bar, audio and subtitle
+  shows as played and length, or just the time left. Seek bar, audio and subtitle
   tracks, volume, fullscreen, keyboard shortcuts, and **resume** where you left off. Movies are
   marked watched at 95%.
 - **Re-encode to HEVC** — for files over the limit (5 GB by default): a preview with the
