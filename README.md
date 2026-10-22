@@ -17,17 +17,17 @@ window and they join your library; click a poster and it plays right there. Movi
   fingerprint. Watched folders import new movies automatically.
 - **Built-in player** (libmpv) — the video fills the window and the controls float over it,
   fading once the mouse rests (after 2.5 s by default, adjustable, paused or not). The time
-  shows as played and length, or just the time left. Seek bar, audio and subtitle
-  tracks, volume, fullscreen, keyboard shortcuts, and **resume** where you left off. Movies are
-  marked watched at 95%.
+  shows as the time left (the default), or as time played and length. Seek bar, audio and
+  subtitle tracks, volume, fullscreen, keyboard shortcuts, and **resume** where you left off.
+  Movies are marked watched at 95%.
 - **Re-encode to HEVC** — for files over the limit (5 GB by default): a preview with the
   expected size, then a background encode with progress, ETA and cancel. The size it aims for
-  follows the limit (95% of it, so 4.75 GB for 5 GB). Two quality presets: **Fast** uses your
-  GPU (NVENC → AMF → Quick Sync) when available, otherwise x265; **Best quality** uses x265 at
-  its slow preset in 10-bit, sharper at the same size but much slower. *Custom* lets you pick the
-  encoder and x265 preset yourself. Audio and subtitles are copied untouched, HDR10 metadata is
-  kept, and the result is verified before the original is touched. Afterwards you choose: keep
-  the original, move it to the Recycle Bin, or delete it.
+  follows the limit (95% of it, so 4.75 GB for 5 GB). Two quality presets: **Best quality**
+  (the default) uses x265 at its slow preset in 10-bit, sharper at the same size but much
+  slower; **Fast** uses your GPU (NVENC → AMF → Quick Sync) when available, otherwise x265.
+  *Custom* lets you pick the encoder and x265 preset yourself. Audio and subtitles are copied
+  untouched, HDR10 metadata is kept, and the result is verified before the original is touched.
+  Afterwards you choose: keep the original, move it to the Recycle Bin, or delete it.
 - **Organise** — poster grid or list with a featured banner for the movie you were last
   watching (or the newest one), search, sort, shelves (Continue watching, Unwatched, Large
   files…) and your own tags, which you can rename, merge and delete.
