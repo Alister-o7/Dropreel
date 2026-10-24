@@ -137,6 +137,8 @@ fn import_probe_thumbnail_and_reencode() {
         encoder: Encoder::X265,
         video_kbps: p.video_kbps,
         x265_preset: "ultrafast",
+        // As *Best quality* does: the 8-bit clip comes out in 10-bit.
+        always_ten_bit: true,
         video: &video,
         hdr: None,
         subtitle_codecs: &subs,
@@ -165,7 +167,14 @@ fn import_probe_thumbnail_and_reencode() {
     )
     .unwrap();
     let encoded = probe::probe(&ffprobe, &part).unwrap();
-    assert_eq!(encoded.video.unwrap().codec, "hevc");
+    let encoded_video = encoded.video.unwrap();
+    assert_eq!(encoded_video.codec, "hevc");
+    assert!(!video.is_high_bit_depth());
+    assert!(
+        encoded_video.is_high_bit_depth(),
+        "{:?}",
+        encoded_video.pix_fmt
+    );
     assert_eq!(encoded.audio.len(), 1, "audio copied");
     assert_eq!(encoded.subtitles.len(), 1, "subtitles copied");
 }

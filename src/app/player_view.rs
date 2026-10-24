@@ -10,6 +10,7 @@ use super::widgets;
 use super::{Action, DropReelApp};
 use crate::library::MovieId;
 use crate::player::{Player, PlayerEvent, RefreshRate, Track, TrackKind};
+use crate::settings::TimeDisplay;
 use crate::util::format_duration;
 
 /// How often the playback position is saved while playing.
@@ -210,6 +211,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 paused,
                 fullscreen,
                 controls_opacity,
+                settings.time_display,
             );
             if !recently_active && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p)) {
                 ctx.set_cursor_icon(egui::CursorIcon::None);
@@ -288,6 +290,7 @@ fn controls(
     paused: bool,
     fullscreen: bool,
     opacity: f32,
+    time_display: TimeDisplay,
 ) {
     ui.multiply_opacity(opacity);
     let painter = ui.painter().clone();
@@ -334,11 +337,10 @@ fn controls(
             let duration = dur.unwrap_or(0.0);
             let shown = np.seek_drag.or(pos).unwrap_or(0.0);
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format_duration(shown))
-                        .monospace()
-                        .color(media::TEXT),
-                );
+                let time = |text: String| RichText::new(text).monospace().color(media::TEXT);
+                if time_display == TimeDisplay::Normal {
+                    ui.label(time(format_duration(shown)));
+                }
                 let time_w = 70.0;
                 let width = (ui.available_width() - time_w).max(50.0);
                 let (value, r) = line_slider(ui, width, shown, duration, "Seek");
@@ -355,11 +357,10 @@ fn controls(
                 } else if let Some(target) = np.seek_drag.take() {
                     player.seek(target, true);
                 }
-                ui.label(
-                    RichText::new(format_duration(duration))
-                        .monospace()
-                        .color(media::TEXT),
-                );
+                ui.label(time(format_duration(match time_display {
+                    TimeDisplay::Normal => duration,
+                    TimeDisplay::Remaining => (duration - shown).max(0.0),
+                })));
             });
 
             // Buttons, in a row as tall as the play button from the start, so every button is

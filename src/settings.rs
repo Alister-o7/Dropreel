@@ -33,6 +33,65 @@ impl EncoderChoice {
     }
 }
 
+/// How re-encodes trade speed for quality. The size is the same either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EncodeQuality {
+    /// The first working GPU encoder, else x265 at its `fast` preset.
+    Fast,
+    /// x265 on the CPU at its `slow` preset, always 10-bit: hours rather than minutes.
+    #[default]
+    Best,
+    /// The encoder and x265 preset chosen in Settings.
+    Custom,
+}
+
+impl EncodeQuality {
+    pub const ALL: [EncodeQuality; 3] = [Self::Fast, Self::Best, Self::Custom];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fast => "Fast",
+            Self::Best => "Best quality",
+            Self::Custom => "Custom",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Fast => {
+                "Uses your graphics card when it can: usually well under an hour for a movie."
+            }
+            Self::Best => {
+                "x265 on the CPU at its slow preset, in 10-bit for smoother gradients. Sharper at the same size, but a movie can take several hours."
+            }
+            Self::Custom => "Pick the encoder and x265 preset yourself.",
+        }
+    }
+}
+
+/// How the player shows the time next to the seek bar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TimeDisplay {
+    /// Time played on the left, the movie's length on the right.
+    Normal,
+    /// Only the time left, on the right, like Netflix.
+    #[default]
+    Remaining,
+}
+
+impl TimeDisplay {
+    pub const ALL: [TimeDisplay; 2] = [Self::Normal, Self::Remaining];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Time played and length",
+            Self::Remaining => "Time left",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeChoice {
@@ -63,6 +122,8 @@ pub struct Settings {
     pub tmdb_api_key: String,
     pub ffmpeg_path: Option<PathBuf>,
     pub ffprobe_path: Option<PathBuf>,
+    pub quality: EncodeQuality,
+    /// Used with [`EncodeQuality::Custom`].
     pub encoder: EncoderChoice,
     pub x265_preset: String,
     /// Files larger than this many decimal GB get a re-encode suggestion.
@@ -74,6 +135,7 @@ pub struct Settings {
     pub smooth_motion: bool,
     /// Seconds without mouse movement before the player's controls fade out.
     pub hide_controls_after: f64,
+    pub time_display: TimeDisplay,
 }
 
 impl Default for Settings {
@@ -83,6 +145,7 @@ impl Default for Settings {
             tmdb_api_key: String::new(),
             ffmpeg_path: None,
             ffprobe_path: None,
+            quality: EncodeQuality::Best,
             encoder: EncoderChoice::Auto,
             x265_preset: "medium".into(),
             threshold_gb: 5.0,
@@ -91,6 +154,7 @@ impl Default for Settings {
             // Off by default: on some displays and drivers it makes playback worse, not better.
             smooth_motion: false,
             hide_controls_after: 2.5,
+            time_display: TimeDisplay::Remaining,
         }
     }
 }
@@ -101,7 +165,24 @@ impl Settings {
     pub fn load(path: &Path) -> (Self, Option<String>) {
         match std::fs::read_to_string(path) {
             Ok(text) => match toml::from_str::<Settings>(&text) {
-                Ok(settings) => (settings.sanitized(), None),
+                Ok(mut settings) => {
+                    // Files from before these options keep working as they did: the new defaults
+                    // are for fresh installs.
+                    let table = text.parse::<toml::Table>().unwrap_or_default();
+                    if !table.contains_key("quality") {
+                        let hand_picked = settings.encoder != EncoderChoice::Auto
+                            || settings.x265_preset != "medium";
+                        settings.quality = if hand_picked {
+                            EncodeQuality::Custom
+                        } else {
+                            EncodeQuality::Fast
+                        };
+                    }
+                    if !table.contains_key("time_display") {
+                        settings.time_display = TimeDisplay::Normal;
+                    }
+                    (settings.sanitized(), None)
+                }
                 Err(err) => (
                     Self::default(),
                     Some(format!("settings.toml is invalid and was ignored: {err}")),
@@ -151,6 +232,29 @@ impl Settings {
         (self.threshold_bytes() as f64 * 0.95) as u64
     }
 
+    /// The encoder the quality preset asks for.
+    pub fn effective_encoder(&self) -> EncoderChoice {
+        match self.quality {
+            EncodeQuality::Fast => EncoderChoice::Auto,
+            EncodeQuality::Best => EncoderChoice::X265,
+            EncodeQuality::Custom => self.encoder,
+        }
+    }
+
+    /// The x265 preset the quality preset asks for.
+    pub fn effective_x265_preset(&self) -> &str {
+        match self.quality {
+            EncodeQuality::Fast => "fast",
+            EncodeQuality::Best => "slow",
+            EncodeQuality::Custom => &self.x265_preset,
+        }
+    }
+
+    /// Whether 8-bit sources are encoded in 10-bit too (higher-bit-depth sources always are).
+    pub fn always_ten_bit(&self) -> bool {
+        self.quality == EncodeQuality::Best
+    }
+
     pub fn tmdb_enabled(&self) -> bool {
         !self.tmdb_api_key.is_empty()
     }
@@ -188,8 +292,64 @@ mod tests {
     }
 
     #[test]
+    fn the_target_size_follows_the_threshold() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.target_bytes(), 4_750_000_000);
+        settings.threshold_gb = 8.0;
+        assert_eq!(settings.target_bytes(), 7_600_000_000);
+        settings.threshold_gb = 2.0;
+        assert_eq!(settings.target_bytes(), 1_900_000_000);
+    }
+
+    #[test]
+    fn quality_presets_pick_the_encoder_and_preset() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.quality, EncodeQuality::Best);
+        settings.quality = EncodeQuality::Fast;
+        assert_eq!(settings.effective_encoder(), EncoderChoice::Auto);
+        assert_eq!(settings.effective_x265_preset(), "fast");
+        assert!(!settings.always_ten_bit());
+
+        settings.quality = EncodeQuality::Best;
+        assert_eq!(settings.effective_encoder(), EncoderChoice::X265);
+        assert_eq!(settings.effective_x265_preset(), "slow");
+        assert!(settings.always_ten_bit());
+
+        settings.quality = EncodeQuality::Custom;
+        settings.encoder = EncoderChoice::Qsv;
+        settings.x265_preset = "slower".into();
+        assert_eq!(settings.effective_encoder(), EncoderChoice::Qsv);
+        assert_eq!(settings.effective_x265_preset(), "slower");
+        assert!(!settings.always_ten_bit());
+    }
+
+    #[test]
+    fn older_settings_with_a_chosen_encoder_become_custom() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, "encoder = \"x265\"\nx265_preset = \"slower\"").unwrap();
+        let (loaded, _) = Settings::load(&path);
+        assert_eq!(loaded.quality, EncodeQuality::Custom);
+        assert_eq!(loaded.effective_x265_preset(), "slower");
+
+        // Older files keep the old behaviour; the new defaults are for fresh installs.
+        std::fs::write(&path, "threshold_gb = 8.0").unwrap();
+        let (older, _) = Settings::load(&path);
+        assert_eq!(older.quality, EncodeQuality::Fast);
+        assert_eq!(older.time_display, TimeDisplay::Normal);
+        let saved = Settings::default();
+        saved.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).0, saved);
+
+        std::fs::write(&path, "quality = \"best\"\nencoder = \"nvenc\"").unwrap();
+        assert_eq!(Settings::load(&path).0.quality, EncodeQuality::Best);
+    }
+
+    #[test]
     fn fresh_settings_and_the_hide_delay() {
         let fresh = Settings::default();
+        assert_eq!(fresh.quality, EncodeQuality::Best);
+        assert_eq!(fresh.time_display, TimeDisplay::Remaining);
         assert!(fresh.high_quality_video);
         assert!(!fresh.smooth_motion);
         assert_eq!(fresh.hide_controls_after, 2.5);
