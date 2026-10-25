@@ -467,6 +467,12 @@ fn small_window_renders_every_screen() {
     let file = copy_into(&fx.multitrack, &root.path().join("movies"), None);
     let mut app = launch_sized(root.path(), vec![], egui::vec2(720.0, 480.0));
     drop_files(&mut app, &[file]);
+    // In a window this small the import toast sits over the poster's details button.
+    until(&mut app, "the import toast", |a| {
+        has_text(a, "Added 1 movie")
+    });
+    click(&mut app, "Click to dismiss");
+    until(&mut app, "the toast to go", |a| !has(a, "Click to dismiss"));
     click(&mut app, "Details: Multi Track");
     until(&mut app, "details", |a| has(a, "Remove from library"));
     click(&mut app, "Close");
