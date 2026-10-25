@@ -6,4 +6,4 @@ pub mod import;
 pub mod scan;
 pub mod watch;
 
-pub use db::{Db, Movie, MovieId, NewMovie, Tag, TagId, TrackInfo};
+pub use db::{Db, Movie, MovieId, NewMovie, Show, ShowId, Tag, TagId, TrackInfo};

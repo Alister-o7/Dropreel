@@ -11,7 +11,7 @@ use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, OriginalChoice, PreviewDialog};
 use crate::encode::{EncodeOutcome, EncodePreview, Encoder};
 use crate::library::import::ImportReport;
-use crate::library::{Movie, MovieId, Tag, TagId};
+use crate::library::{Movie, MovieId, ShowId, Tag, TagId};
 use crate::metadata::tmdb::TmdbMovie;
 use crate::settings::{
     EncodeQuality, EncoderChoice, HIDE_CONTROLS_RANGE, Settings, ThemeChoice, TimeDisplay,
@@ -50,6 +50,7 @@ pub struct Dialogs {
     pub edit: Option<EditDialog>,
     pub tmdb: Option<TmdbDialog>,
     pub confirm_remove: Option<MovieId>,
+    pub confirm_remove_show: Option<ShowId>,
     pub rename_tag: Option<RenameTagDialog>,
     pub confirm_delete_tag: Option<TagId>,
     /// Text of the "New tag" field in the detail panel.
@@ -126,6 +127,7 @@ pub fn show(app: &mut DropReelApp, ctx: &egui::Context) {
     edit_dialog(app, ctx);
     tmdb_dialog(app, ctx);
     remove_dialog(app, ctx);
+    remove_show_dialog(app, ctx);
     rename_tag_dialog(app, ctx);
     delete_tag_dialog(app, ctx);
     resume_dialog(app, ctx);
@@ -693,6 +695,49 @@ fn remove_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
     });
     if done || close {
         app.dialogs.confirm_remove = None;
+    }
+}
+
+fn remove_show_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
+    let Some(id) = app.dialogs.confirm_remove_show else {
+        return;
+    };
+    let p = palette(ctx);
+    let (title, episodes) = app
+        .lib
+        .show(id)
+        .map(|s| (s.show.title.clone(), s.episodes.len()))
+        .unwrap_or_default();
+    let mut done = false;
+    let ((), close) = modal(ctx, "confirm_remove_show", 400.0, |ui| {
+        header(
+            ui,
+            icons::TRASH,
+            p.danger,
+            "Remove show from library?",
+            None,
+        );
+        let count = if episodes == 1 {
+            "its episode".to_string()
+        } else {
+            format!("all {episodes} episodes")
+        };
+        ui.label(
+            RichText::new(format!(
+                "\"{title}\" and {count} will be removed from DropReel. The files on disk are not deleted."
+            ))
+            .color(p.text_weak),
+        );
+        footer(ui, |ui| {
+            if widgets::button(ui, ButtonKind::Danger, Some(icons::TRASH), "Remove").clicked() {
+                app.actions.push(Action::RemoveShow(id));
+                done = true;
+            }
+            done |= widgets::button(ui, ButtonKind::Secondary, None, "Cancel").clicked();
+        });
+    });
+    if done || close {
+        app.dialogs.confirm_remove_show = None;
     }
 }
 

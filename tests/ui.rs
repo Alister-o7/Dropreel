@@ -467,6 +467,12 @@ fn small_window_renders_every_screen() {
     let file = copy_into(&fx.multitrack, &root.path().join("movies"), None);
     let mut app = launch_sized(root.path(), vec![], egui::vec2(720.0, 480.0));
     drop_files(&mut app, &[file]);
+    // In a window this small the import toast sits over the poster's details button.
+    until(&mut app, "the import toast", |a| {
+        has_text(a, "Added 1 movie")
+    });
+    click(&mut app, "Click to dismiss");
+    until(&mut app, "the toast to go", |a| !has(a, "Click to dismiss"));
     click(&mut app, "Details: Multi Track");
     until(&mut app, "details", |a| has(a, "Remove from library"));
     click(&mut app, "Close");
@@ -475,6 +481,58 @@ fn small_window_renders_every_screen() {
     click(&mut app, "Cancel");
     app.set_size(egui::vec2(400.0, 300.0));
     run_for(&mut app, Duration::from_millis(300));
+}
+
+#[test]
+fn toolbar_items_never_overlap() {
+    let (Some(_), Some(fx)) = (tools(), fixtures()) else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.multitrack, &root.path().join("movies"), None);
+    let mut app = launch_sized(root.path(), vec![], egui::vec2(1280.0, 800.0));
+    drop_files(&mut app, &[file]);
+    click(&mut app, "Details: Multi Track");
+    until(&mut app, "details", |a| has(a, "Remove from library"));
+    // From roomy to the narrowest window, with the details panel taking its share.
+    for width in [1280.0, 1100.0, 960.0, 860.0, 760.0] {
+        app.set_size(egui::vec2(width, 800.0));
+        run_for(&mut app, Duration::from_millis(200));
+        let names = [
+            "All movies",
+            "Search movies",
+            "Sort: Title",
+            "Reverse order",
+            "Poster grid",
+            "List view",
+            "Settings",
+        ];
+        // The page title is the last "All movies" (the first is the sidebar's).
+        let rects: Vec<(&str, egui::Rect)> = names
+            .iter()
+            .filter_map(|&name| {
+                let rect = app
+                    .root()
+                    .children_recursive()
+                    .filter(|n| {
+                        n.accesskit_node().label().as_deref() == Some(name)
+                            || n.accesskit_node().value().as_deref() == Some(name)
+                    })
+                    .last()?
+                    .rect();
+                Some((name, rect))
+            })
+            .collect();
+        assert_eq!(rects.len(), names.len(), "at {width}: {rects:?}");
+        for (i, (a, ra)) in rects.iter().enumerate() {
+            for (b, rb) in &rects[i + 1..] {
+                assert!(
+                    !ra.shrink(1.0).intersects(rb.shrink(1.0)),
+                    "at {width} wide, {a} {ra:?} overlaps {b} {rb:?}"
+                );
+            }
+        }
+    }
 }
 
 // ----- playback through the UI -----
@@ -647,6 +705,50 @@ fn watching_to_the_end_marks_watched_and_returns_to_the_library() {
     click(&mut app, "The Test Movie");
     until(&mut app, "the player", in_player);
     assert!(!has_text(&app, "Resume from"));
+}
+
+#[test]
+fn shows_group_their_episodes_and_play_them_in_order() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let tv = root.path().join("TV");
+    let season = tv.join("Test Show").join("Season 1");
+    copy_into(&fx.mkv, &season, Some("Test.Show.S01E01.Pilot.mkv"));
+    copy_into(&fx.webm, &season, Some("S01E02.webm"));
+    let mut app = launch(root.path(), vec![]);
+    drop_files(&mut app, std::slice::from_ref(&tv));
+    until(&mut app, "the show", |a| {
+        has(a, "Test Show") && has(a, "Shows")
+    });
+    // One card for the show, none for its episodes. (Its middle is a play button.)
+    assert!(!has(&app, "Pilot"));
+    click(&mut app, "More info: Test Show");
+    until(&mut app, "the episodes", |a| {
+        has(a, "S01E01 Pilot") && has(a, "S01E02 Episode 2")
+    });
+
+    click(&mut app, "Play S01E01");
+    until(&mut app, "the player", in_player);
+    // At the end, the next episode is offered rather than going back to the library.
+    until(&mut app, "the Up next card", |a| has(a, "Play now"));
+    assert!(in_player(&app));
+    click(&mut app, "Play now");
+    let episode = |n: u32| {
+        db(root.path())
+            .all_movies()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.episode == Some(n))
+            .unwrap()
+    };
+    until(&mut app, "the second episode", |a| {
+        in_player(a) && episode(2).last_played.is_some()
+    });
+    assert!(episode(1).watched);
+    // The last episode ends like a movie.
+    until(&mut app, "the end of the show", |a| !in_player(a));
+    until(&mut app, "the toast", |a| has_text(a, "Finished"));
+    assert!(episode(2).watched);
 }
 
 #[test]

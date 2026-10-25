@@ -130,6 +130,19 @@ fn encodes_verifies_and_relinks_the_movie() {
     assert_eq!(movie.path, outcome.output);
     assert_eq!(movie.video_codec.as_deref(), Some("hevc"));
     assert!(!queue.is_busy());
+
+    // A watched-folder scan of the same folder leaves one movie: the original (kept on disk
+    // here) isn't added back as a second, larger copy.
+    let env = LibraryEnv {
+        db_path: db_path.clone(),
+        posters_dir: dir.path().join("posters"),
+        tools: tools.clone(),
+        tmdb_key: String::new(),
+    };
+    run_import(&env, &[dir.path().to_path_buf()], false, &|_| {}, &|| {}).unwrap();
+    let movies = Db::open(&db_path).unwrap().all_movies().unwrap();
+    assert_eq!(movies.len(), 1, "{movies:?}");
+    assert_eq!(movies[0].id, id);
 }
 
 #[test]

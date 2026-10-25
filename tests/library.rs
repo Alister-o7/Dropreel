@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use dropreel::app::state::{Filter, Library, Shelf, SortKey, visible_movies};
+use dropreel::app::state::{Filter, Library, Shelf, SortKey, visible_entries};
 use dropreel::library::import::relink_manually;
 use dropreel::library::watch::FolderWatcher;
 use dropreel::library::{Db, Movie, scan};
@@ -462,6 +462,65 @@ fn watched_folder_picks_up_new_files_once_they_finish_copying() {
 }
 
 #[test]
+fn episodes_are_grouped_into_shows() {
+    let (Some(tools), Some(fx)) = (tools(), fixtures()) else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let tv = root.path().join("TV");
+    copy_into(
+        &fx.mkv,
+        &tv.join("Night Shift/Season 1"),
+        Some("Night.Shift.S01E01.Pilot.mkv"),
+    );
+    copy_into(
+        &fx.mp4,
+        &tv.join("Night Shift/Season 2"),
+        Some("S02E01.mp4"),
+    );
+    copy_into(&fx.webm, &tv, Some("Other Show - 1x05 - Five.webm"));
+    copy_into(&fx.avi, &root.path().join("Movies"), Some("Heat.1995.avi"));
+    let env = env(root.path(), &tools);
+    let report = import(&env, &[tv.clone(), root.path().join("Movies")]);
+    assert_eq!(report.summary(), "Added 1 movie and 3 episodes");
+
+    let db = Db::open(&env.db_path).unwrap();
+    let mut shows = db.all_shows().unwrap();
+    shows.sort_by(|a, b| a.title.cmp(&b.title));
+    let names: Vec<&str> = shows.iter().map(|s| s.title.as_str()).collect();
+    assert_eq!(names, ["Night Shift", "Other Show"]);
+    let lib = Library::load(&db).unwrap();
+    let night = lib.show(shows[0].id).unwrap();
+    let episodes: Vec<_> = lib
+        .episodes(night)
+        .map(|m| (m.episode_code().unwrap(), m.title.clone()))
+        .collect();
+    assert_eq!(
+        episodes,
+        [
+            ("S01E01".to_string(), "Pilot".to_string()),
+            ("S02E01".to_string(), "Episode 1".to_string()),
+        ]
+    );
+    let heat = movies(&env.db_path)
+        .into_iter()
+        .find(|m| m.show_id.is_none())
+        .unwrap();
+    assert_eq!((heat.title.as_str(), heat.year), ("Heat", Some(1995)));
+
+    // A new episode joins its show; removing a show's episodes removes the show.
+    copy_into(&fx.ts, &tv.join("Night Shift/Season 2"), Some("S02E02.ts"));
+    background_import(&env, std::slice::from_ref(&tv));
+    let lib = Library::load(&db).unwrap();
+    assert_eq!(lib.show(shows[0].id).unwrap().episodes.len(), 3);
+    for m in lib.episodes(lib.show(shows[1].id).unwrap()) {
+        db.remove_movie(m.id).unwrap();
+    }
+    db.remove_empty_shows().unwrap();
+    assert_eq!(db.all_shows().unwrap().len(), 1);
+}
+
+#[test]
 fn search_sort_shelves_and_tags_over_a_real_library() {
     let (Some(tools), Some(fx)) = (tools(), fixtures()) else {
         return;
@@ -485,9 +544,9 @@ fn search_sort_shelves_and_tags_over_a_real_library() {
 
     let lib = Library::load(&db).unwrap();
     let titles = |filter: &Filter| -> Vec<String> {
-        visible_movies(&lib, filter)
+        visible_entries(&lib, filter)
             .into_iter()
-            .map(|i| lib.movies[i].title.clone())
+            .map(|e| lib.entry_title(e).to_string())
             .collect()
     };
     let search = |s: &str| {

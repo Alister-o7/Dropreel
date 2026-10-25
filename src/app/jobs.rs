@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::events::{AppEvent, EventSink};
 use crate::library::import::{self, LibraryEnv};
-use crate::library::{Db, MovieId};
+use crate::library::{Db, MovieId, ShowId};
 use crate::metadata;
 use crate::metadata::tmdb::{TmdbClient, TmdbMovie};
 
@@ -38,8 +38,8 @@ pub fn import(env: LibraryEnv, events: EventSink, paths: Vec<PathBuf>, interacti
     });
 }
 
-/// Re-grabs low-resolution frame posters from older versions, refreshing the library as each
-/// one is done.
+/// Re-grabs low-resolution frame posters and downloads small TMDb posters again, from older
+/// versions, refreshing the library as each one is done.
 pub fn upgrade_posters(env: LibraryEnv, events: EventSink) {
     spawn("poster-upgrade", move || {
         let db = match Db::open(&env.db_path) {
@@ -55,6 +55,30 @@ pub fn upgrade_posters(env: LibraryEnv, events: EventSink) {
         if n > 0 {
             tracing::info!("upgraded {n} frame posters to a higher resolution");
         }
+        let n = metadata::upgrade_tmdb_posters(&env, &db, &|| {
+            events.send(AppEvent::LibraryChanged);
+        });
+        if n > 0 {
+            tracing::info!("downloaded {n} TMDb posters again at a higher resolution");
+        }
+    });
+}
+
+/// Looks a show up on TMDb (poster, plot, episode titles).
+pub fn show_metadata(env: LibraryEnv, events: EventSink, show: ShowId) {
+    spawn("tmdb-show", move || {
+        let result = Db::open(&env.db_path)
+            .map_err(|e| e.to_string())
+            .and_then(|db| {
+                metadata::fetch_show_metadata(&env, &db, show)?;
+                Ok(db
+                    .show(show)
+                    .ok()
+                    .flatten()
+                    .map(|s| s.title)
+                    .unwrap_or_default())
+            });
+        events.send(AppEvent::ShowMetadataFetched { result });
     });
 }
 

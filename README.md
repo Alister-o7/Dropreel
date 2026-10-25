@@ -4,9 +4,9 @@
 
 [![Windows](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml/badge.svg)](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml)
 
-A movie library and player for Windows, written in Rust. Drag movie files or folders onto the
-window and they join your library; click a poster and it plays right there. Movies larger than
-5 GB get a one-click re-encode to HEVC that brings them under 5 GB.
+A movie and TV library and player for Windows, written in Rust. Drag movie or episode files, or
+whole folders, onto the window and they join your library; click a poster and it plays right
+there. Files larger than 5 GB get a one-click re-encode to HEVC that brings them under 5 GB.
 
 ![Library](docs/screenshots/library.jpg)
 
@@ -15,6 +15,11 @@ window and they join your library; click a poster and it plays right there. Movi
 - **Drag & drop library** — drop files or whole folders (`mkv mp4 m4v avi mov wmv webm ts m2ts`).
   Duplicates are skipped, and a movie that was moved or renamed is found again by its
   fingerprint. Watched folders import new movies automatically.
+- **Shows** — files named like episodes (`Show.Name.S01E02.mkv`, `Show Name - 1x02 - Title.mkv`,
+  or `S01E02.mkv` inside a `Show Name/Season 1` folder) become one show with seasons and
+  episodes. Its card opens the episode list; **Play** picks up the episode you're on, or the
+  next one. At the end of an episode an *Up next* card plays the next one after a few seconds,
+  and `N` skips ahead. With a TMDb key, shows get their poster, plot and episode titles.
 - **Built-in player** (libmpv) — the video fills the window and the controls float over it,
   fading once the mouse rests (after 2.5 s by default, adjustable, paused or not). The time
   shows as the time left (the default), or as time played and length. Seek bar, audio and
@@ -28,12 +33,12 @@ window and they join your library; click a poster and it plays right there. Movi
   *Custom* lets you pick the encoder and x265 preset yourself. Audio and subtitles are copied
   untouched, HDR10 metadata is kept, and the result is verified before the original is touched.
   Afterwards you choose: keep the original, move it to the Recycle Bin, or delete it.
-- **Organise** — poster grid or list with a featured banner for the movie you were last
-  watching (or the newest one), search, sort, shelves (Continue watching, Unwatched, Large
-  files…) and your own tags, which you can rename, merge and delete.
+- **Organise** — poster grid or list with a featured banner for what you were last watching (or
+  the newest addition), search, sort, shelves (Movies, Shows, Continue watching, Unwatched,
+  Watched…) and your own tags, which you can rename, merge and delete.
 - **Posters & metadata** — a frame from the movie by default (up to 1280 px wide, with the title
-  across the bottom like box art); optionally from [TMDb](https://www.themoviedb.org) with an
-  API key. Works fully offline.
+  across the bottom like box art); optionally 780-pixel posters from
+  [TMDb](https://www.themoviedb.org) with an API key. Works fully offline.
 - **A dark, Netflix-style look** with one brick-red accent, plus a light theme.
 
 | Movie details | Re-encode preview |
@@ -74,9 +79,11 @@ You can also point DropReel at your own `ffmpeg`/`ffprobe` in **Settings**, or h
 |---|---|
 | Add movies | Drag files/folders onto the window, or **Add movies** / **Add folder** |
 | Play | Click a poster (or double-click a row in list view) |
+| A show's episodes | Click its poster away from the play button, or right-click → *Episodes* |
 | Details, tags, re-encode | Hover a poster → ⓘ, or right-click it |
 | Rename or delete a tag | Right-click it in the sidebar, or *Settings → Tags* |
 | Play/pause · seek ±10 s · volume · mute | `Space` · `←` `→` · `↑` `↓` · `M` |
+| Next episode | `N`, or the ⏭ button |
 | Fullscreen | `F` or double-click the video; `Esc` leaves fullscreen, then returns to the library |
 | Search | `Ctrl+F` |
 
@@ -128,9 +135,9 @@ with ffmpeg once, and cache them under `target/`.
 
 | Suite | What it covers |
 |---|---|
-| `tests/library.rs` | Importing every supported container from nested folders, junk and partial files, duplicates, concurrent imports, moved/missing/removed files, Locate…, folder watching, search/sort/shelves/tags |
+| `tests/library.rs` | Importing every supported container from nested folders, junk and partial files, duplicates, concurrent imports, moved/missing/removed files, Locate…, folder watching, search/sort/shelves/tags, episodes grouped into shows |
 | `tests/player.rs` | Real libmpv, headless: loading, resume, pause, seeking (including before a file has finished opening), end of file, truncated files, audio/subtitle tracks, volume, unplayable files, smooth motion |
-| `tests/ui.rs` | The whole app driven through its accessibility tree with egui_kittest: drag & drop, search, details, removal, settings, renaming and deleting tags, small windows, playback controls, resume prompt, keyboard shortcuts, track menus, "Open with" |
+| `tests/ui.rs` | The whole app driven through its accessibility tree with egui_kittest: drag & drop, search, details, removal, settings, renaming and deleting tags, shows and Up next, toolbar layout at every width, small windows, playback controls, resume prompt, keyboard shortcuts, track menus, "Open with" |
 | `tests/ffmpeg_pipeline.rs`, `tests/encode_queue.rs` | Probing, thumbnails, real HEVC encodes and verification |
 
 Suites skip themselves when ffmpeg or libmpv can't be found. Point `DROPREEL_LIBMPV` at

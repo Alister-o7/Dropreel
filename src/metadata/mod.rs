@@ -8,7 +8,7 @@ pub mod tmdb;
 use std::path::{Path, PathBuf};
 
 use crate::library::import::LibraryEnv;
-use crate::library::{Db, MovieId};
+use crate::library::{Db, MovieId, ShowId};
 use tmdb::{TmdbClient, TmdbMovie};
 
 /// A fresh poster file name. The timestamp makes the image URI change when a poster is
@@ -17,6 +17,12 @@ fn new_poster_path(posters: &Path, id: MovieId, kind: &str) -> PathBuf {
     let stamp = chrono::Utc::now().timestamp_millis();
     posters.join(format!("{id}-{kind}-{stamp}.jpg"))
 }
+
+/// Kind in the file names of TMDb posters, which says their size: older versions saved
+/// 500-pixel posters as `-tmdb-`.
+const TMDB_KIND: &str = "tmdb780";
+/// Kind in the file names of shows' TMDb posters (named by the show's id, not a movie's).
+const SHOW_TMDB_KIND: &str = "show-tmdb780";
 
 /// Whether a poster is a frame grabbed from the movie (rather than artwork from TMDb).
 pub fn is_frame_poster(poster: &Path) -> bool {
@@ -60,7 +66,7 @@ pub fn apply_tmdb_match(
     )
     .map_err(|e| e.to_string())?;
     if let Some(poster) = &m.poster_path {
-        let out = new_poster_path(&env.posters_dir, id, "tmdb");
+        let out = new_poster_path(&env.posters_dir, id, TMDB_KIND);
         client.download_poster(poster, &out)?;
         replace_poster(env, db, id, &out).map_err(|e| e.to_string())?;
     }
@@ -131,6 +137,133 @@ pub fn upgrade_frame_posters(env: &LibraryEnv, db: &Db, on_upgrade: &dyn Fn()) -
     upgraded
 }
 
+/// Downloads TMDb posters again at the current size where older versions saved smaller ones. Calls `on_upgrade` after each one and returns how many were upgraded.
+pub fn upgrade_tmdb_posters(env: &LibraryEnv, db: &Db, on_upgrade: &dyn Fn()) -> usize {
+    if env.tmdb_key.is_empty() {
+        return 0;
+    }
+    let movies = match db.all_movies() {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("could not list movies to upgrade posters: {e:#}");
+            return 0;
+        }
+    };
+    let stale: Vec<_> = movies
+        .into_iter()
+        .filter(|m| {
+            m.tmdb_id.is_some()
+                && m.poster.as_deref().is_some_and(|p| {
+                    let name = p.file_name().unwrap_or_default().to_string_lossy();
+                    // Only our own downloads, from before posters were named by their size.
+                    p.starts_with(&env.posters_dir) && name.contains("-tmdb-")
+                })
+        })
+        .collect();
+    if stale.is_empty() {
+        return 0;
+    }
+    let client = match TmdbClient::new(&env.tmdb_key) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("could not upgrade TMDb posters: {e}");
+            return 0;
+        }
+    };
+    let mut upgraded = 0;
+    for movie in stale {
+        let Some(tmdb_id) = movie.tmdb_id else {
+            continue;
+        };
+        let result = client.poster_path(tmdb_id).and_then(|path| {
+            let Some(path) = path else { return Ok(false) };
+            let out = new_poster_path(&env.posters_dir, movie.id, TMDB_KIND);
+            client.download_poster(&path, &out)?;
+            replace_poster(env, db, movie.id, &out).map_err(|e| e.to_string())?;
+            Ok(true)
+        });
+        match result {
+            Ok(true) => {
+                upgraded += 1;
+                on_upgrade();
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!("could not upgrade the poster of \"{}\": {e}", movie.title);
+                // Offline or a bad key: the rest would fail the same way.
+                if e.contains("request failed") || e.contains("rejected") {
+                    break;
+                }
+            }
+        }
+    }
+    upgraded
+}
+
+/// Looks a show up on TMDb: its poster, plot and year, and its episodes' titles and plots.
+pub fn fetch_show_metadata(env: &LibraryEnv, db: &Db, id: ShowId) -> Result<(), String> {
+    if env.tmdb_key.is_empty() {
+        return Ok(());
+    }
+    let show = db
+        .show(id)
+        .map_err(|e| e.to_string())?
+        .ok_or("the show is no longer in the library")?;
+    let client = TmdbClient::new(&env.tmdb_key)?;
+    let Some(found) = client.find_best_show(&show.title, show.year)? else {
+        return Err(format!("TMDb has no show called \"{}\"", show.title));
+    };
+    db.set_show_tmdb_metadata(
+        id,
+        found.id,
+        found.year(),
+        found.overview.as_deref().filter(|o| !o.is_empty()),
+    )
+    .map_err(|e| e.to_string())?;
+    if let Some(poster) = &found.poster_path {
+        let out = new_poster_path(&env.posters_dir, id, SHOW_TMDB_KIND);
+        client.download_poster(poster, &out)?;
+        db.set_show_poster(id, Some(&out))
+            .map_err(|e| e.to_string())?;
+        if show.poster.as_deref() != Some(out.as_path()) {
+            delete_cached_poster(&env.posters_dir, show.poster.as_deref());
+        }
+    }
+    // Episode titles and plots, season by season.
+    let episodes: Vec<_> = db
+        .all_movies()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|m| m.show_id == Some(id))
+        .collect();
+    let mut seasons: Vec<u32> = episodes.iter().filter_map(|m| m.season).collect();
+    seasons.sort_unstable();
+    seasons.dedup();
+    for season in seasons {
+        let listed = match client.season(found.id, season) {
+            Ok(listed) => listed,
+            Err(e) => {
+                tracing::warn!("no TMDb episodes for {} season {season}: {e}", show.title);
+                continue;
+            }
+        };
+        for movie in episodes.iter().filter(|m| m.season == Some(season)) {
+            if let Some(ep) = listed
+                .iter()
+                .find(|e| Some(e.episode_number) == movie.episode && !e.name.is_empty())
+            {
+                db.set_episode_details(
+                    movie.id,
+                    &ep.name,
+                    ep.overview.as_deref().filter(|o| !o.is_empty()),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Metadata for a newly imported movie: TMDb if a key is set, otherwise (or when TMDb has no
 /// poster) a frame grab. `hdr` makes the frame grab tone-map. Returns a warning if something
 /// went wrong.
@@ -138,7 +271,8 @@ pub fn fetch_for_new_movie(env: &LibraryEnv, db: &Db, id: MovieId, hdr: bool) ->
     let movie = db.movie(id).ok()??;
     let mut warning = None;
     let mut has_poster = false;
-    if !env.tmdb_key.is_empty() {
+    // Episodes get a frame from the episode; TMDb's movie search would only find the wrong thing.
+    if !env.tmdb_key.is_empty() && movie.show_id.is_none() {
         let result = TmdbClient::new(&env.tmdb_key).and_then(|client| {
             match client.find_best(&movie.title, movie.year)? {
                 Some(m) => {

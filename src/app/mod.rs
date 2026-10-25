@@ -7,6 +7,7 @@ mod icons;
 mod jobs;
 mod library_view;
 mod player_view;
+mod show_detail;
 pub mod state;
 mod theme;
 mod toasts;
@@ -26,7 +27,7 @@ use crate::encode::{
 };
 use crate::library::import::{self, ImportProgress, ImportReport, LibraryEnv};
 use crate::library::watch::{FolderWatcher, SETTLE_TIME};
-use crate::library::{Db, MovieId, TagId, scan};
+use crate::library::{Db, MovieId, ShowId, TagId, scan};
 use crate::metadata::{self, tmdb::TmdbMovie};
 use crate::paths::AppPaths;
 use crate::player::Player;
@@ -47,8 +48,23 @@ pub enum Action {
     StopPlayback {
         finished: bool,
     },
+    /// Go on to the next episode of a show; `finished` when this one played to the end.
+    PlayNextEpisode {
+        finished: bool,
+    },
     PlaybackFailed(String),
     ShowDetails(MovieId),
+    /// Open a show's panel: its seasons and episodes.
+    ShowShow(ShowId),
+    /// Play a show's next episode (see [`Library::next_episode`]).
+    PlayShow(ShowId),
+    /// Mark every episode of a show watched or unwatched.
+    SetShowWatched(ShowId, bool),
+    /// Look a show up on TMDb: poster, plot and episode titles.
+    FetchShowMetadata(ShowId),
+    /// Asks before removing a show (all its episodes) from the library.
+    AskRemoveShow(ShowId),
+    RemoveShow(ShowId),
     CloseDetails,
     OpenFolder(MovieId),
     Locate(MovieId),
@@ -91,6 +107,14 @@ pub enum OriginalChoice {
     Delete,
 }
 
+/// What the details panel shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Detail {
+    /// A movie or an episode.
+    Movie(MovieId),
+    Show(ShowId),
+}
+
 /// The re-encode preview dialog.
 pub enum PreviewDialog {
     Loading { movie_id: MovieId, title: String },
@@ -115,11 +139,11 @@ pub struct DropReelApp {
     lib: Library,
     prefs: Prefs,
     filter: Filter,
-    visible: Vec<usize>,
+    visible: Vec<state::Entry>,
     filter_dirty: bool,
-    selected: Option<MovieId>,
-    /// The movie in the details panel; kept while the panel slides closed.
-    detail_shown: Option<MovieId>,
+    selected: Option<Detail>,
+    /// What the details panel shows; kept while the panel slides closed.
+    detail_shown: Option<Detail>,
     /// When the switch between the library and the player started: the new screen fades in
     /// from black.
     screen_fade: Option<Instant>,
@@ -374,7 +398,12 @@ impl DropReelApp {
         match Library::load(&self.db) {
             Ok(lib) => {
                 self.lib = lib;
-                if self.selected.is_some_and(|id| self.lib.get(id).is_none()) {
+                let gone = match self.selected {
+                    Some(Detail::Movie(id)) => self.lib.get(id).is_none(),
+                    Some(Detail::Show(id)) => self.lib.show(id).is_none(),
+                    None => false,
+                };
+                if gone {
                     self.selected = None;
                 }
                 if self
@@ -475,6 +504,16 @@ impl DropReelApp {
                 AppEvent::TmdbResults { search_id, result } => {
                     self.dialogs.tmdb_results(search_id, result)
                 }
+                AppEvent::ShowMetadataFetched { result } => {
+                    self.reload_requested = true;
+                    match result {
+                        Ok(title) => self.toasts.add(
+                            ToastKind::Success,
+                            format!("Updated \"{title}\" from TMDb."),
+                        ),
+                        Err(e) => self.toasts.add(ToastKind::Error, e),
+                    }
+                }
                 AppEvent::TmdbApplied { movie_id, result } => {
                     self.reload_requested = true;
                     match result {
@@ -513,6 +552,18 @@ impl DropReelApp {
         }
     }
 
+    /// Forgets shows whose last episode was removed.
+    fn drop_empty_shows(&mut self) {
+        match self.db.remove_empty_shows() {
+            Ok(posters) => {
+                for poster in posters {
+                    metadata::delete_cached_poster(&self.paths.posters, Some(&poster));
+                }
+            }
+            Err(e) => tracing::warn!("could not tidy up empty shows: {e:#}"),
+        }
+    }
+
     fn db_result(&mut self, result: anyhow::Result<()>) {
         match result {
             Ok(()) => self.reload_requested = true,
@@ -525,11 +576,68 @@ impl DropReelApp {
             Action::Play(id) => self.play(id),
             Action::StartPlayback(id, start) => self.start_playback(id, start),
             Action::StopPlayback { finished } => self.stop_playback(finished, ctx),
+            Action::PlayNextEpisode { finished } => self.play_next_episode(finished),
             Action::PlaybackFailed(message) => {
                 self.toasts.add(ToastKind::Error, message);
                 self.stop_playback(false, ctx);
             }
-            Action::ShowDetails(id) => self.selected = Some(id),
+            Action::ShowDetails(id) => self.selected = Some(Detail::Movie(id)),
+            Action::ShowShow(id) => self.selected = Some(Detail::Show(id)),
+            Action::PlayShow(id) => {
+                let next = self
+                    .lib
+                    .show(id)
+                    .and_then(|show| self.lib.next_episode(show))
+                    .map(|(m, resume)| (m.id, resume));
+                if let Some((episode, resume)) = next {
+                    match resume {
+                        Some(pos) => self.start_playback(episode, Some(pos)),
+                        None => self.play(episode),
+                    }
+                }
+            }
+            Action::SetShowWatched(id, watched) => {
+                let episodes: Vec<MovieId> = self
+                    .lib
+                    .show(id)
+                    .map(|s| self.lib.episodes(s).map(|m| m.id).collect())
+                    .unwrap_or_default();
+                let result = episodes
+                    .into_iter()
+                    .try_for_each(|e| self.db.set_watched(e, watched));
+                self.db_result(result);
+            }
+            Action::AskRemoveShow(id) => self.dialogs.confirm_remove_show = Some(id),
+            Action::FetchShowMetadata(id) => {
+                self.toasts
+                    .add(ToastKind::Info, "Looking the show up on TMDb…".to_string());
+                jobs::show_metadata(self.env(), self.events.clone(), id);
+            }
+            Action::RemoveShow(id) => {
+                let episodes: Vec<(MovieId, Option<PathBuf>)> = self
+                    .lib
+                    .show(id)
+                    .map(|s| {
+                        self.lib
+                            .episodes(s)
+                            .map(|m| (m.id, m.poster.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let mut result = Ok(());
+                for (episode, poster) in episodes {
+                    result = self.db.remove_movie(episode);
+                    if result.is_err() {
+                        break;
+                    }
+                    metadata::delete_cached_poster(&self.paths.posters, poster.as_deref());
+                }
+                if result.is_ok() && self.selected == Some(Detail::Show(id)) {
+                    self.selected = None;
+                }
+                self.db_result(result);
+                self.drop_empty_shows();
+            }
             Action::CloseDetails => self.selected = None,
             Action::OpenFolder(id) => {
                 if let Some(m) = self.lib.get(id) {
@@ -554,11 +662,12 @@ impl DropReelApp {
                 let result = self.db.remove_movie(id);
                 if result.is_ok() {
                     metadata::delete_cached_poster(&self.paths.posters, poster.as_deref());
-                    if self.selected == Some(id) {
+                    if self.selected == Some(Detail::Movie(id)) {
                         self.selected = None;
                     }
                 }
                 self.db_result(result);
+                self.drop_empty_shows();
             }
             Action::SetTag(movie, tag, on) => {
                 let r = self.db.set_movie_tag(movie, tag, on);
@@ -687,7 +796,7 @@ impl DropReelApp {
             return;
         };
         if self.lib.missing.contains(&id) {
-            self.selected = Some(id);
+            self.selected = Some(Detail::Movie(id));
             self.toasts.add(
                 ToastKind::Error,
                 format!(
@@ -728,11 +837,21 @@ impl DropReelApp {
         tracing::info!("playing \"{}\" from {start:?}", movie.title);
         match player.load(&movie.path, start) {
             Ok(()) => {
-                self.now_playing = Some(player_view::NowPlaying::new(
-                    id,
-                    movie.title.clone(),
-                    movie.duration,
-                ));
+                let mut np = player_view::NowPlaying::new(id, movie.title.clone(), movie.duration);
+                if let Some(show) = movie.show_id.and_then(|s| self.lib.show(s)) {
+                    let code = movie.episode_code().unwrap_or_default();
+                    np.subtitle = Some(format!("{code} · {}", movie.title));
+                    np.title = show.show.title.clone();
+                    np.next = self
+                        .lib
+                        .episode_after(&movie)
+                        .filter(|next| !self.lib.missing.contains(&next.id))
+                        .map(|next| {
+                            let code = next.episode_code().unwrap_or_default();
+                            (next.id, format!("{code} · {}", next.title))
+                        });
+                }
+                self.now_playing = Some(np);
                 self.screen_fade = Some(Instant::now());
                 let r = self.db.mark_played(id);
                 self.db_result(r);
@@ -768,10 +887,38 @@ impl DropReelApp {
         self.db_result(result);
     }
 
+    /// Ends this episode and starts the next, staying in the player (and in fullscreen).
+    fn play_next_episode(&mut self, finished: bool) {
+        let Some((next, _)) = self.now_playing.as_ref().and_then(|np| np.next.clone()) else {
+            return;
+        };
+        self.end_playback(finished);
+        let resume = self
+            .lib
+            .get(next)
+            .and_then(|m| m.resume_pos.filter(|_| !m.watched));
+        self.start_playback(next, resume);
+    }
+
     fn stop_playback(&mut self, finished: bool, ctx: &egui::Context) {
         if self.now_playing.is_none() {
             return;
         }
+        if finished && let Some(np) = &self.now_playing {
+            let name = match &np.subtitle {
+                Some(episode) => format!("{} {episode}", np.title),
+                None => np.title.clone(),
+            };
+            self.toasts
+                .add(ToastKind::Success, format!("Finished \"{name}\"."));
+        }
+        self.end_playback(finished);
+        self.screen_fade = Some(Instant::now());
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+    }
+
+    /// Saves where playback got to and unloads the file.
+    fn end_playback(&mut self, finished: bool) {
         if let (Some(np), Ok(player)) = (&self.now_playing, &self.player) {
             tracing::info!(
                 "stopped \"{}\" at {:?} (finished: {finished})",
@@ -784,13 +931,7 @@ impl DropReelApp {
         if let Ok(player) = self.player.as_mut() {
             player.stop();
         }
-        if finished && let Some(np) = &self.now_playing {
-            self.toasts
-                .add(ToastKind::Success, format!("Finished \"{}\".", np.title));
-        }
         self.now_playing = None;
-        self.screen_fade = Some(Instant::now());
-        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
     }
 
     fn locate(&mut self, id: MovieId) {
@@ -944,6 +1085,13 @@ impl DropReelApp {
         };
         match result {
             Ok(()) => {
+                // An entry still pointing at the original (added back by an older version, or by
+                // hand) would only show up as missing now.
+                if let Ok(Some(stale)) = self.db.find_by_path(original)
+                    && stale != outcome.movie_id
+                {
+                    self.actions.push(Action::Remove(stale));
+                }
                 let verb = if choice == OriginalChoice::Trash {
                     "Moved the original to the Recycle Bin"
                 } else {
@@ -1034,7 +1182,7 @@ impl eframe::App for DropReelApp {
             self.quit_prompt = true;
         }
         if self.filter_dirty {
-            self.visible = state::visible_movies(&self.lib, &self.filter);
+            self.visible = state::visible_entries(&self.lib, &self.filter);
             self.filter_dirty = false;
         }
         self.handle_dropped_files(&ctx);

@@ -6,7 +6,8 @@ use std::time::Duration;
 use serde::Deserialize;
 
 const API: &str = "https://api.themoviedb.org/3";
-const IMAGES: &str = "https://image.tmdb.org/t/p/w500";
+/// Posters 780 pixels wide: sharp on high-DPI screens without TMDb's multi-megabyte originals.
+const IMAGES: &str = "https://image.tmdb.org/t/p/w780";
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct TmdbMovie {
@@ -27,9 +28,42 @@ impl TmdbMovie {
 }
 
 #[derive(Deserialize)]
-struct SearchResponse {
+struct SearchResponse<T> {
+    #[serde(default = "Vec::new")]
+    results: Vec<T>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct TmdbShow {
+    pub id: i64,
+    pub name: String,
     #[serde(default)]
-    results: Vec<TmdbMovie>,
+    pub first_air_date: Option<String>,
+    #[serde(default)]
+    pub overview: Option<String>,
+    #[serde(default)]
+    pub poster_path: Option<String>,
+}
+
+impl TmdbShow {
+    pub fn year(&self) -> Option<i32> {
+        self.first_air_date.as_deref()?.get(..4)?.parse().ok()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct TmdbEpisode {
+    pub episode_number: u32,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub overview: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SeasonResponse {
+    #[serde(default)]
+    episodes: Vec<TmdbEpisode>,
 }
 
 pub struct TmdbClient {
@@ -67,18 +101,43 @@ impl TmdbClient {
         if let Some(year) = year {
             req = req.query(&[("year", year.to_string())]);
         }
-        let resp = req
-            .send()
-            .map_err(|e| format!("TMDb request failed: {e}"))?;
-        match resp.status().as_u16() {
-            200 => {}
-            401 => return Err("TMDb rejected the API key. Check it in Settings.".into()),
-            code => return Err(format!("TMDb returned HTTP {code}")),
-        }
-        let body: SearchResponse = resp
-            .json()
-            .map_err(|e| format!("unexpected TMDb response: {e}"))?;
+        let body: SearchResponse<TmdbMovie> = fetch(req)?;
         Ok(body.results)
+    }
+
+    pub fn search_shows(&self, query: &str, year: Option<i32>) -> Result<Vec<TmdbShow>, String> {
+        let mut req = self
+            .get(&format!("{API}/search/tv"))
+            .query(&[("query", query), ("include_adult", "false")]);
+        if let Some(year) = year {
+            req = req.query(&[("first_air_date_year", year.to_string())]);
+        }
+        let body: SearchResponse<TmdbShow> = fetch(req)?;
+        Ok(body.results)
+    }
+
+    /// Searches with the year first, then without it if nothing matched.
+    pub fn find_best_show(
+        &self,
+        name: &str,
+        year: Option<i32>,
+    ) -> Result<Option<TmdbShow>, String> {
+        let mut results = self.search_shows(name, year)?;
+        if results.is_empty() && year.is_some() {
+            results = self.search_shows(name, None)?;
+        }
+        if let Some(y) = year
+            && let Some(at) = results.iter().position(|s| s.year() == Some(y))
+        {
+            return Ok(Some(results.swap_remove(at)));
+        }
+        Ok(results.into_iter().next())
+    }
+
+    /// The episodes TMDb lists for one season of a show.
+    pub fn season(&self, show_id: i64, season: u32) -> Result<Vec<TmdbEpisode>, String> {
+        let body: SeasonResponse = fetch(self.get(&format!("{API}/tv/{show_id}/season/{season}")))?;
+        Ok(body.episodes)
     }
 
     /// Searches with the year first, then without it if nothing matched.
@@ -88,6 +147,12 @@ impl TmdbClient {
             results = self.search(title, None)?;
         }
         Ok(best_match(results, year))
+    }
+
+    /// The current poster of a movie TMDb already matched.
+    pub fn poster_path(&self, tmdb_id: i64) -> Result<Option<String>, String> {
+        let movie: TmdbMovie = fetch(self.get(&format!("{API}/movie/{tmdb_id}")))?;
+        Ok(movie.poster_path)
     }
 
     pub fn download_poster(&self, poster_path: &str, out: &Path) -> Result<(), String> {
@@ -102,6 +167,22 @@ impl TmdbClient {
             .map_err(|e| format!("poster download failed: {e}"))?;
         std::fs::write(out, &bytes).map_err(|e| format!("could not save poster: {e}"))
     }
+}
+
+/// Sends a TMDb API request and reads its JSON answer.
+fn fetch<T: serde::de::DeserializeOwned>(
+    req: reqwest::blocking::RequestBuilder,
+) -> Result<T, String> {
+    let resp = req
+        .send()
+        .map_err(|e| format!("TMDb request failed: {e}"))?;
+    match resp.status().as_u16() {
+        200 => {}
+        401 => return Err("TMDb rejected the API key. Check it in Settings.".into()),
+        code => return Err(format!("TMDb returned HTTP {code}")),
+    }
+    resp.json()
+        .map_err(|e| format!("unexpected TMDb response: {e}"))
 }
 
 /// Prefers a result released in `year`, then TMDb's own ranking.

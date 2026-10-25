@@ -34,6 +34,10 @@ pub enum AppEvent {
         movie_id: MovieId,
         result: Result<(), String>,
     },
+    /// A show was looked up on TMDb; carries its title.
+    ShowMetadataFetched {
+        result: Result<String, String>,
+    },
     Toast(ToastKind, String),
     EncodePreview(Box<crate::encode::EncodePreview>),
     Encode(crate::encode::EncodeEvent),

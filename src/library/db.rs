@@ -7,10 +7,12 @@ use anyhow::{Context as _, bail};
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 use serde::{Deserialize, Serialize};
 
+use crate::metadata::filename::{self, EpisodeName};
 use crate::util::now_unix;
 
 pub type MovieId = i64;
 pub type TagId = i64;
+pub type ShowId = i64;
 
 /// Schema migrations. Entry `i` upgrades the schema from version `i` to `i + 1`; the current
 /// version is stored in SQLite's `user_version`. Never edit an entry that has shipped — add a
@@ -51,7 +53,23 @@ const MIGRATIONS: &[&str] = &[
     );",
     // v3: files the user removed, so watched-folder scans do not add them back
     "CREATE TABLE ignored_paths (path TEXT PRIMARY KEY);",
+    // v4: shows. An episode is a row in `movies` that belongs to a show.
+    "CREATE TABLE shows (
+        id          INTEGER PRIMARY KEY,
+        title       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        year        INTEGER,
+        plot        TEXT,
+        poster_path TEXT,
+        tmdb_id     INTEGER
+    );
+    ALTER TABLE movies ADD COLUMN show_id INTEGER REFERENCES shows(id) ON DELETE SET NULL;
+    ALTER TABLE movies ADD COLUMN season INTEGER;
+    ALTER TABLE movies ADD COLUMN episode INTEGER;
+    CREATE INDEX movies_show ON movies(show_id);",
 ];
+
+/// The schema version that introduced shows; upgrading past it sorts existing episodes into shows.
+const SHOWS_VERSION: usize = 4;
 
 pub const SCHEMA_VERSION: usize = MIGRATIONS.len();
 
@@ -112,6 +130,28 @@ pub struct Movie {
     pub watched: bool,
     pub poster: Option<PathBuf>,
     pub tmdb_id: Option<i64>,
+    /// Set for an episode of a show; its `title` is then the episode's own title.
+    pub show_id: Option<ShowId>,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
+}
+
+impl Movie {
+    /// "S01E02" for an episode.
+    pub fn episode_code(&self) -> Option<String> {
+        Some(format!("S{:02}E{:02}", self.season?, self.episode?))
+    }
+}
+
+/// A show: its episodes are the movies with its `show_id`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Show {
+    pub id: ShowId,
+    pub title: String,
+    pub year: Option<i32>,
+    pub plot: Option<String>,
+    pub poster: Option<PathBuf>,
+    pub tmdb_id: Option<i64>,
 }
 
 /// Technical details of a file on disk, as stored for a movie.
@@ -133,6 +173,8 @@ pub struct NewMovie {
     pub file: FileInfo,
     pub title: String,
     pub year: Option<i32>,
+    /// Set when the file is an episode of a show.
+    pub episode: Option<EpisodeName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -160,7 +202,7 @@ fn tracks_from_sql(text: String) -> Vec<TrackInfo> {
 const MOVIE_COLUMNS: &str =
     "id, path, title, year, plot, size, duration, video_codec, width, height,
     audio_tracks, subtitle_tracks, fingerprint, date_added, last_played, resume_pos, watched,
-    poster_path, tmdb_id";
+    poster_path, tmdb_id, show_id, season, episode";
 
 fn movie_from_row(row: &Row<'_>) -> rusqlite::Result<Movie> {
     Ok(Movie {
@@ -183,7 +225,28 @@ fn movie_from_row(row: &Row<'_>) -> rusqlite::Result<Movie> {
         watched: row.get(16)?,
         poster: row.get::<_, Option<String>>(17)?.map(PathBuf::from),
         tmdb_id: row.get(18)?,
+        show_id: row.get(19)?,
+        season: row.get(20)?,
+        episode: row.get(21)?,
     })
+}
+
+fn show_from_row(row: &Row<'_>) -> rusqlite::Result<Show> {
+    Ok(Show {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        year: row.get(2)?,
+        plot: row.get(3)?,
+        poster: row.get::<_, Option<String>>(4)?.map(PathBuf::from),
+        tmdb_id: row.get(5)?,
+    })
+}
+
+/// An episode's title in the library: its own, or "Episode 3".
+fn episode_title(ep: &EpisodeName) -> String {
+    ep.title
+        .clone()
+        .unwrap_or_else(|| format!("Episode {}", ep.episode))
 }
 
 impl Db {
@@ -228,6 +291,33 @@ impl Db {
             tx.pragma_update(None, "user_version", (version + 1) as i64)?;
             tx.commit()?;
         }
+        if current < SHOWS_VERSION && SCHEMA_VERSION >= SHOWS_VERSION {
+            self.sort_episodes_into_shows()?;
+        }
+        Ok(())
+    }
+
+    /// Libraries from before shows: files named like episodes become episodes of their show.
+    fn sort_episodes_into_shows(&self) -> anyhow::Result<()> {
+        let rows: Vec<(MovieId, PathBuf)> = {
+            let mut stmt = self.conn.prepare("SELECT id, path FROM movies")?;
+            stmt.query_map([], |r| {
+                Ok((r.get(0)?, PathBuf::from(r.get::<_, String>(1)?)))
+            })?
+            .collect::<Result<_, _>>()?
+        };
+        let tx = self.conn.unchecked_transaction()?;
+        for (id, path) in rows {
+            if let Some(ep) = filename::parse_episode(&path) {
+                // Movie metadata matched from TMDb doesn't belong to an episode.
+                self.set_episode(id, &ep)?;
+                tx.execute(
+                    "UPDATE movies SET tmdb_id = NULL, plot = NULL WHERE id = ?1",
+                    [id],
+                )?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -312,7 +402,11 @@ impl Db {
                 now_unix(),
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = self.conn.last_insert_rowid();
+        if let Some(ep) = &movie.episode {
+            self.set_episode(id, ep)?;
+        }
+        Ok(id)
     }
 
     /// Points a movie at a new location of the same file.
@@ -331,9 +425,20 @@ impl Db {
     }
 
     /// Replaces the file behind a movie (after a re-encode), keeping its metadata, tags and
-    /// resume position.
+    /// resume position. A watched folder may already have added the new file as a movie of its
+    /// own; that entry is dropped. The old file is remembered as removed, so watched folders
+    /// don't add it back as a second copy of the movie (an explicit add still can).
     pub fn replace_file(&self, id: MovieId, f: &FileInfo) -> anyhow::Result<()> {
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO ignored_paths (path) SELECT path FROM movies WHERE id = ?1",
+            [id],
+        )?;
+        tx.execute(
+            "DELETE FROM movies WHERE path = ?2 AND id != ?1",
+            params![id, path_to_sql(&f.path)],
+        )?;
+        tx.execute(
             "UPDATE movies SET path = ?2, size = ?3, fingerprint = ?4, duration = ?5,
                 video_codec = ?6, width = ?7, height = ?8, audio_tracks = ?9, subtitle_tracks = ?10
              WHERE id = ?1",
@@ -350,6 +455,11 @@ impl Db {
                 tracks_to_sql(&f.subtitle_tracks),
             ],
         )?;
+        tx.execute(
+            "DELETE FROM ignored_paths WHERE path = ?1",
+            [path_to_sql(&f.path)],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -411,6 +521,118 @@ impl Db {
             params![id, watched],
         )?;
         Ok(())
+    }
+
+    // ----- shows -----
+
+    pub fn all_shows(&self) -> anyhow::Result<Vec<Show>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, title, year, plot, poster_path, tmdb_id FROM shows")?;
+        let shows = stmt
+            .query_map([], show_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(shows)
+    }
+
+    pub fn show(&self, id: ShowId) -> anyhow::Result<Option<Show>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, title, year, plot, poster_path, tmdb_id FROM shows WHERE id = ?1",
+                [id],
+                show_from_row,
+            )
+            .optional()?)
+    }
+
+    /// The show called `title` (ignoring case), created if it's new.
+    pub fn show_named(&self, title: &str, year: Option<i32>) -> anyhow::Result<ShowId> {
+        let existing: Option<ShowId> = self
+            .conn
+            .query_row("SELECT id FROM shows WHERE title = ?1", [title], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if let Some(id) = existing {
+            if year.is_some() {
+                self.conn.execute(
+                    "UPDATE shows SET year = ?2 WHERE id = ?1 AND year IS NULL",
+                    params![id, year],
+                )?;
+            }
+            return Ok(id);
+        }
+        self.conn.execute(
+            "INSERT INTO shows (title, year) VALUES (?1, ?2)",
+            params![title, year],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Makes a movie an episode of its show (created if needed).
+    pub fn set_episode(&self, id: MovieId, ep: &EpisodeName) -> anyhow::Result<ShowId> {
+        let show = self.show_named(&ep.show, ep.year)?;
+        self.conn.execute(
+            "UPDATE movies SET show_id = ?2, season = ?3, episode = ?4, title = ?5, year = NULL
+             WHERE id = ?1",
+            params![id, show, ep.season, ep.episode, episode_title(ep)],
+        )?;
+        Ok(show)
+    }
+
+    pub fn set_show_poster(&self, id: ShowId, poster: Option<&Path>) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE shows SET poster_path = ?2 WHERE id = ?1",
+            params![id, poster.map(path_to_sql)],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_show_tmdb_metadata(
+        &self,
+        id: ShowId,
+        tmdb_id: i64,
+        year: Option<i32>,
+        plot: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE shows SET tmdb_id = ?2, year = COALESCE(?3, year), plot = ?4 WHERE id = ?1",
+            params![id, tmdb_id, year, plot],
+        )?;
+        Ok(())
+    }
+
+    /// Updates an episode's title (from TMDb) and plot.
+    pub fn set_episode_details(
+        &self,
+        id: MovieId,
+        title: &str,
+        plot: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE movies SET title = ?2, plot = ?3 WHERE id = ?1",
+            params![id, title, plot],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes shows with no episodes left, returning their cached posters.
+    pub fn remove_empty_shows(&self) -> anyhow::Result<Vec<PathBuf>> {
+        let posters: Vec<PathBuf> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT poster_path FROM shows WHERE poster_path IS NOT NULL
+                 AND id NOT IN (SELECT show_id FROM movies WHERE show_id IS NOT NULL)",
+            )?;
+            stmt.query_map([], |r| r.get::<_, String>(0))?
+                .map(|p| p.map(PathBuf::from))
+                .collect::<Result<_, _>>()?
+        };
+        self.conn.execute(
+            "DELETE FROM shows WHERE id NOT IN (SELECT show_id FROM movies WHERE show_id IS NOT NULL)",
+            [],
+        )?;
+        Ok(posters)
     }
 
     /// Removes a movie from the library. The file on disk is not touched. Its path is remembered
@@ -561,6 +783,7 @@ mod tests {
             },
             title: "Movie".into(),
             year: Some(2019),
+            episode: None,
         }
     }
 
@@ -637,6 +860,131 @@ mod tests {
 
         // A duplicate path is rejected by the UNIQUE constraint.
         assert!(db.insert_movie(&sample("D:/moved.mkv", "x")).is_err());
+    }
+
+    #[test]
+    fn a_re_encode_replaces_the_file_without_leaving_a_second_copy() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db
+            .insert_movie(&sample("G:/Films/Heat.mkv", "big"))
+            .unwrap();
+        db.set_resume(id, Some(600.0)).unwrap();
+        // A watched folder spotted the new file first and added it as a movie of its own.
+        let early = db
+            .insert_movie(&sample("G:/Films/Heat.hevc.mkv", "small"))
+            .unwrap();
+
+        let mut encoded = sample("G:/Films/Heat.hevc.mkv", "small").file;
+        encoded.size = 4_000_000_000;
+        db.replace_file(id, &encoded).unwrap();
+
+        let movies = db.all_movies().unwrap();
+        assert_eq!(movies.len(), 1, "{movies:?}");
+        assert_eq!(movies[0].id, id);
+        assert_eq!(movies[0].size, 4_000_000_000);
+        assert_eq!(movies[0].resume_pos, Some(600.0));
+        assert!(db.movie(early).unwrap().is_none());
+        // Watched folders won't add the original back while it's still on disk.
+        assert_eq!(
+            db.ignored_paths().unwrap(),
+            vec![PathBuf::from("G:/Films/Heat.mkv")]
+        );
+    }
+
+    fn episode_of(show: &str, season: u32, episode: u32) -> EpisodeName {
+        EpisodeName {
+            show: show.into(),
+            year: None,
+            season,
+            episode,
+            title: None,
+        }
+    }
+
+    #[test]
+    fn episodes_belong_to_their_show() {
+        let db = Db::open_in_memory().unwrap();
+        let mut first = sample("D:/TV/Dark.S01E01.mkv", "a");
+        first.episode = Some(EpisodeName {
+            title: Some("Secrets".into()),
+            ..episode_of("Dark", 1, 1)
+        });
+        let mut second = sample("D:/TV/dark.s01e02.mkv", "b");
+        second.episode = Some(episode_of("dark", 1, 2));
+        let a = db.insert_movie(&first).unwrap();
+        let b = db.insert_movie(&second).unwrap();
+        let movie = db.insert_movie(&sample("D:/Movies/Heat.mkv", "c")).unwrap();
+
+        let shows = db.all_shows().unwrap();
+        assert_eq!(shows.len(), 1, "show names ignore case");
+        assert_eq!(shows[0].title, "Dark");
+        let a = db.movie(a).unwrap().unwrap();
+        let b = db.movie(b).unwrap().unwrap();
+        assert_eq!(a.show_id, Some(shows[0].id));
+        assert_eq!(
+            (a.title.as_str(), a.episode_code().as_deref()),
+            ("Secrets", Some("S01E01"))
+        );
+        assert_eq!(b.title, "Episode 2");
+        assert_eq!(db.movie(movie).unwrap().unwrap().show_id, None);
+
+        // A show goes once its last episode does.
+        db.set_show_poster(shows[0].id, Some(Path::new("/p/dark.jpg")))
+            .unwrap();
+        db.remove_movie(a.id).unwrap();
+        assert!(db.remove_empty_shows().unwrap().is_empty());
+        db.remove_movie(b.id).unwrap();
+        assert_eq!(
+            db.remove_empty_shows().unwrap(),
+            vec![PathBuf::from("/p/dark.jpg")]
+        );
+        assert!(db.all_shows().unwrap().is_empty());
+    }
+
+    #[test]
+    fn upgrading_sorts_existing_episodes_into_shows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in &MIGRATIONS[..3] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 3).unwrap();
+            for (file, title) in [
+                ("D:/TV/Severance/Season 1/S01E02.mkv", "S01E02"),
+                (
+                    "D:/TV/Severance.S01E01.Good.News.About.Hell.mkv",
+                    "Severance",
+                ),
+                ("D:/Movies/Heat.1995.mkv", "Heat"),
+            ] {
+                conn.execute(
+                    "INSERT INTO movies (path, title, size, fingerprint, date_added, tmdb_id)
+                     VALUES (?1, ?2, 1, ?1, 0, 42)",
+                    [file, title],
+                )
+                .unwrap();
+            }
+        }
+        let db = Db::open(&path).unwrap();
+        let shows = db.all_shows().unwrap();
+        assert_eq!(shows.len(), 1);
+        assert_eq!(shows[0].title, "Severance");
+        let mut movies = db.all_movies().unwrap();
+        movies.sort_by_key(|m| (m.season, m.episode));
+        let summary: Vec<_> = movies
+            .iter()
+            .map(|m| (m.title.as_str(), m.episode_code(), m.tmdb_id))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("Heat", None, Some(42)),
+                ("Good News About Hell", Some("S01E01".into()), None),
+                ("Episode 2", Some("S01E02".into()), None),
+            ]
+        );
     }
 
     #[test]
