@@ -1,6 +1,9 @@
-//! Guessing a movie's title and year from its file name.
+//! Guessing a movie's title and year from its file name, and spotting episodes of shows.
 //!
 //! `Movie.Name.2019.1080p.BluRay.x264-GRP.mkv` → ("Movie Name", Some(2019))
+//! `Show.Name.S01E02.Pilot.1080p.mkv` → "Show Name", season 1, episode 2, "Pilot"
+
+use std::path::Path;
 
 use chrono::Datelike as _;
 
@@ -158,6 +161,152 @@ fn parse_with_max_year(stem: &str, max_year: i32) -> (String, Option<i32>) {
     }
 }
 
+/// A file recognised as an episode of a show.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EpisodeName {
+    pub show: String,
+    pub year: Option<i32>,
+    pub season: u32,
+    pub episode: u32,
+    /// The episode's own title, when the file name has one.
+    pub title: Option<String>,
+}
+
+/// Recognises `S01E02`, `S01.E02` and `1x02` episode names. The show's name comes from the file
+/// name, or from its folder (skipping a "Season 1" folder) when the file name starts with the
+/// episode number.
+pub fn parse_episode(path: &Path) -> Option<EpisodeName> {
+    let stem = path.file_stem()?.to_string_lossy();
+    let tokens = tokenize(&stem);
+    let (at, len, season, episode) = (0..tokens.len()).find_map(|i| {
+        if let Some((s, e)) = episode_marker(tokens[i]) {
+            return Some((i, 1, s, e));
+        }
+        let s = season_marker(tokens[i])?;
+        let e = tokens.get(i + 1).and_then(|t| number_after(core(t), 'e'))?;
+        Some((i, 2, s, e))
+    })?;
+    let max_year = chrono::Local::now().year() + 1;
+
+    let (mut show, mut year) = parse_with_max_year(&tokens[..at].join(" "), max_year);
+    if show.is_empty() {
+        (show, year) = show_from_folders(path, max_year)?;
+    }
+
+    // What follows the marker, minus further episode numbers ("S01E01E02", "S01E01-E02").
+    let rest: Vec<&str> = tokens[at + len..]
+        .iter()
+        .copied()
+        .skip_while(|t| {
+            let c = core(t).trim_start_matches('-');
+            c.is_empty() || number_after(c, 'e').is_some()
+        })
+        .collect();
+    let title = match rest.first() {
+        Some(first) if !is_junk(first, false) => {
+            let (title, _) = parse_with_max_year(&rest.join(" "), max_year);
+            Some(title).filter(|t| !t.is_empty())
+        }
+        _ => None,
+    };
+    Some(EpisodeName {
+        show,
+        year,
+        season,
+        episode,
+        title,
+    })
+}
+
+/// Splits a name into words, treating dots and underscores as spaces when it has no spaces.
+fn tokenize(stem: &str) -> Vec<&str> {
+    stem.split(|c: char| c.is_whitespace() || c == '_' || (c == '.' && !stem.contains(' ')))
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// `S01E02` (also `s1e2`, `S01E02E03`, `S01E02-E03`) or `1x02`.
+fn episode_marker(token: &str) -> Option<(u32, u32)> {
+    let lower = core(token).to_lowercase();
+    if let Some(rest) = lower.strip_prefix('s') {
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        if (1..=2).contains(&digits) {
+            let season = rest[..digits].parse().ok()?;
+            let episode = number_after(&rest[digits..], 'e')?;
+            return Some((season, episode));
+        }
+        return None;
+    }
+    let (s, e) = lower.split_once('x')?;
+    let all_digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+    if (1..=2).contains(&s.len()) && (2..=3).contains(&e.len()) && all_digits(s) && all_digits(e) {
+        return Some((s.parse().ok()?, e.parse().ok()?));
+    }
+    None
+}
+
+/// A lone season token such as `S01`.
+fn season_marker(token: &str) -> Option<u32> {
+    let rest = core(token).to_lowercase();
+    let rest = rest.strip_prefix('s')?;
+    ((1..=2).contains(&rest.len()) && rest.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| rest.parse().ok())
+        .flatten()
+}
+
+/// The number after `prefix` at the start of `text` ("e02" → 2), ignoring what follows it.
+fn number_after(text: &str, prefix: char) -> Option<u32> {
+    let lower = text.to_lowercase();
+    let rest = lower.strip_prefix(prefix)?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    (1..=3)
+        .contains(&digits)
+        .then(|| rest[..digits].parse().ok())
+        .flatten()
+}
+
+/// Whether a folder is just a season of its show: "Season 1", "Season 01", "S01", "Series 2".
+fn is_season_folder(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| c.is_whitespace() || c == '.' || c == '_')
+        .filter(|w| !w.is_empty())
+        .collect();
+    match words.as_slice() {
+        [word, n] => {
+            [
+                "season",
+                "series",
+                "staffel",
+                "saison",
+                "temporada",
+                "sezon",
+            ]
+            .contains(word)
+                && n.bytes().all(|b| b.is_ascii_digit())
+        }
+        [one] => season_marker(one).is_some(),
+        _ => false,
+    }
+}
+
+/// The show's name from the folders around an episode: `Show/Season 1/S01E02.mkv` or
+/// `Show.Name.S01.1080p/S01E02.mkv`.
+fn show_from_folders(path: &Path, max_year: i32) -> Option<(String, Option<i32>)> {
+    let mut folders = path.ancestors().skip(1).filter_map(|p| p.file_name());
+    let mut name = folders.next()?.to_string_lossy();
+    if is_season_folder(&name) {
+        name = folders.next()?.to_string_lossy();
+    }
+    let tokens = tokenize(&name);
+    let end = tokens
+        .iter()
+        .position(|t| season_marker(t).is_some() || episode_marker(t).is_some())
+        .unwrap_or(tokens.len());
+    let (show, year) = parse_with_max_year(&tokens[..end].join(" "), max_year);
+    (!show.is_empty()).then_some((show, year))
+}
+
 fn clean(s: &str) -> String {
     let s = s.replace("()", "").replace("[]", "");
     s.trim_matches(|c: char| c.is_whitespace() || "-–—:,([{".contains(c))
@@ -232,6 +381,93 @@ mod tests {
             parse("Alien.1979.Directors.Cut.1080p"),
             t("Alien", Some(1979))
         );
+    }
+
+    fn episode(path: &str) -> Option<EpisodeName> {
+        parse_episode(Path::new(path))
+    }
+
+    fn ep(
+        show: &str,
+        year: Option<i32>,
+        season: u32,
+        episode: u32,
+        title: Option<&str>,
+    ) -> Option<EpisodeName> {
+        Some(EpisodeName {
+            show: show.into(),
+            year,
+            season,
+            episode,
+            title: title.map(Into::into),
+        })
+    }
+
+    #[test]
+    fn scene_style_episodes() {
+        assert_eq!(
+            episode("D:/TV/Breaking.Bad.S01E02.Cats.in.the.Bag.1080p.BluRay.x264-GRP.mkv"),
+            ep("Breaking Bad", None, 1, 2, Some("Cats in the Bag"))
+        );
+        assert_eq!(
+            episode("D:/TV/the.office.us.s02e10.720p.hdtv.mkv"),
+            ep("the office us", None, 2, 10, None)
+        );
+        assert_eq!(
+            episode("D:/TV/Doctor.Who.2005.S03E08.mkv"),
+            ep("Doctor Who", Some(2005), 3, 8, None)
+        );
+        assert_eq!(
+            episode("D:/TV/Show.S01E01E02.Double.Bill.mkv"),
+            ep("Show", None, 1, 1, Some("Double Bill"))
+        );
+        assert_eq!(
+            episode("D:/TV/Show.S01.E05.mkv"),
+            ep("Show", None, 1, 5, None)
+        );
+    }
+
+    #[test]
+    fn plain_episodes() {
+        assert_eq!(
+            episode("D:/TV/Fawlty Towers - 1x03 - The Wedding Party.mkv"),
+            ep("Fawlty Towers", None, 1, 3, Some("The Wedding Party"))
+        );
+        assert_eq!(
+            episode("D:/TV/Show Name - S02E11 - A Title (1080p).mkv"),
+            ep("Show Name", None, 2, 11, Some("A Title"))
+        );
+    }
+
+    #[test]
+    fn the_show_comes_from_folders_when_the_file_has_no_name() {
+        assert_eq!(
+            episode("D:/TV/Severance/Season 1/S01E03.mkv"),
+            ep("Severance", None, 1, 3, None)
+        );
+        assert_eq!(
+            episode("D:/TV/Severance (2022)/S01/S01E04 - In Perpetuity.mkv"),
+            ep("Severance", Some(2022), 1, 4, Some("In Perpetuity"))
+        );
+        assert_eq!(
+            episode("D:/TV/Dark.S02.1080p.WEB/s02e01.mkv"),
+            ep("Dark", None, 2, 1, None)
+        );
+    }
+
+    #[test]
+    fn movies_are_not_episodes() {
+        for movie in [
+            "D:/Movies/Inception.2010.1080p.mkv",
+            "D:/Movies/2001.A.Space.Odyssey.1968.mkv",
+            "D:/Movies/Se7en.1995.mkv",
+            "D:/Movies/S1m0ne.2002.mkv",
+            "D:/Movies/The.Matrix.1999.x264.mkv",
+            "D:/Movies/Blade.Runner.2049.2017.2160p.mkv",
+            "D:/Movies/Movie.Name.2019.1920x1080.mkv",
+        ] {
+            assert_eq!(episode(movie), None, "{movie}");
+        }
     }
 
     #[test]

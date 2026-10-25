@@ -1,4 +1,4 @@
-//! The movie detail panel on the right.
+//! The detail panel on the right: a movie or episode, or a show with its episodes.
 
 use eframe::egui::{
     self, Align, Color32, Layout, Margin, Rect, RichText, Sense, Stroke, Vec2, pos2, vec2,
@@ -8,22 +8,34 @@ use super::icons;
 use super::library_view::{encode_progress_text, movie_menu};
 use super::theme::{self, media, palette, radius};
 use super::widgets::{self, ButtonKind};
-use super::{Action, DropReelApp, EncodeBadge};
+use super::{Action, Detail, DropReelApp, EncodeBadge};
 use crate::util::{format_bytes, format_date, format_duration};
 
 const HERO_H: f32 = 230.0;
 
 pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
-    // While closing, the panel keeps showing the last movie as it slides out.
-    let Some(movie) = app.detail_shown.and_then(|id| app.lib.get(id)).cloned() else {
-        return;
-    };
+    // While closing, the panel keeps showing the last item as it slides out.
+    match app.detail_shown {
+        Some(Detail::Movie(id)) => {
+            if let Some(movie) = app.lib.get(id).cloned() {
+                movie_panel(app, ui, movie);
+            }
+        }
+        Some(Detail::Show(id)) => super::show_detail::panel(app, ui, id),
+        None => {}
+    }
+}
+
+/// The panel's frame: on the right, resizable, sliding open and shut. `add_contents` fills its
+/// scroll area; `scroll_id` gives each item its own scroll position.
+pub fn panel_frame(
+    app: &mut DropReelApp,
+    ui: &mut egui::Ui,
+    scroll_id: impl std::hash::Hash + std::fmt::Debug,
+    add_contents: impl FnOnce(&mut DropReelApp, &mut egui::Ui),
+) {
     let mut open = app.selected.is_some();
     let p = palette(ui.ctx());
-    let id = movie.id;
-    let missing = app.lib.missing.contains(&id);
-    let large = movie.size > app.settings.threshold_bytes();
-    let encode = app.encode_badges.get(&id).cloned();
     let frame = egui::Frame::new().fill(p.surface).inner_margin(0);
     let panel = egui::Panel::right("details")
         .default_size(380.0)
@@ -32,24 +44,85 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
         .drag_to_open(false)
         .frame(frame);
     panel.show_collapsible(ui, &mut open, |ui| {
-        // One scroll position per movie, so switching movies starts at the top.
-        egui::ScrollArea::vertical().id_salt(("details", id)).auto_shrink([false, false]).show(ui, |ui| {
-            // Hero image fading into the panel.
-            let (hero, _) = ui.allocate_exact_size(vec2(ui.available_width(), HERO_H), Sense::hover());
-            widgets::paint_poster(ui, hero, movie.poster.as_deref(), &movie.title, missing, 0);
-            let fade = Rect::from_min_max(pos2(hero.left(), hero.top() + HERO_H * 0.35), hero.right_bottom());
-            widgets::vertical_gradient(ui.painter(), fade, Color32::TRANSPARENT, p.surface);
-            let close = Rect::from_center_size(hero.right_top() + vec2(-26.0, 26.0), Vec2::splat(34.0));
-            let close_resp = widgets::named(ui.interact(close, ui.scope_id().with("close"), Sense::click()), "Close").on_hover_text("Close");
-            let bg = if close_resp.hovered() { media::SCRIM_STRONG } else { media::SCRIM };
-            ui.painter().circle_filled(close.center(), 17.0, bg);
-            widgets::icon_centered(ui.painter(), close.center(), icons::X, theme::icon_font(18.0), media::TEXT);
-            if close_resp.clicked() {
-                app.actions.push(Action::CloseDetails);
-            }
+        egui::ScrollArea::vertical()
+            .id_salt(scroll_id)
+            .auto_shrink([false, false])
+            .show(ui, |ui| add_contents(app, ui));
+    });
+    // Dragged shut by its edge.
+    if !open && app.selected.is_some() {
+        app.actions.push(Action::CloseDetails);
+    }
+}
 
-            egui::Frame::new().inner_margin(Margin { left: 22, right: 22, top: 0, bottom: 22 }).show(ui, |ui| {
+/// The hero image across the top of the panel, fading into it, with a close button.
+pub fn hero(
+    app: &mut DropReelApp,
+    ui: &mut egui::Ui,
+    poster: Option<&std::path::Path>,
+    title: &str,
+    dim: bool,
+) {
+    let p = palette(ui.ctx());
+    let (hero, _) = ui.allocate_exact_size(vec2(ui.available_width(), HERO_H), Sense::hover());
+    widgets::paint_poster(ui, hero, poster, title, dim, 0);
+    let fade = Rect::from_min_max(
+        pos2(hero.left(), hero.top() + HERO_H * 0.35),
+        hero.right_bottom(),
+    );
+    widgets::vertical_gradient(ui.painter(), fade, Color32::TRANSPARENT, p.surface);
+    let close = Rect::from_center_size(hero.right_top() + vec2(-26.0, 26.0), Vec2::splat(34.0));
+    let close_resp = widgets::named(
+        ui.interact(close, ui.scope_id().with("close"), Sense::click()),
+        "Close",
+    )
+    .on_hover_text("Close");
+    let bg = if close_resp.hovered() {
+        media::SCRIM_STRONG
+    } else {
+        media::SCRIM
+    };
+    ui.painter().circle_filled(close.center(), 17.0, bg);
+    widgets::icon_centered(
+        ui.painter(),
+        close.center(),
+        icons::X,
+        theme::icon_font(18.0),
+        media::TEXT,
+    );
+    if close_resp.clicked() {
+        app.actions.push(Action::CloseDetails);
+    }
+}
+
+fn movie_panel(app: &mut DropReelApp, ui: &mut egui::Ui, movie: crate::library::Movie) {
+    let p = palette(ui.ctx());
+    let id = movie.id;
+    let missing = app.lib.missing.contains(&id);
+    let large = movie.size > app.settings.threshold_bytes();
+    let encode = app.encode_badges.get(&id).cloned();
+    let show = movie
+        .show_id
+        .and_then(|s| app.lib.show(s))
+        .map(|s| (s.show.id, s.show.title.clone()));
+    // One scroll position per movie, so switching movies starts at the top.
+    panel_frame(app, ui, ("details", id), |app, ui| {
+        hero(app, ui, movie.poster.as_deref(), &movie.title, missing);
+
+        egui::Frame::new().inner_margin(Margin { left: 22, right: 22, top: 0, bottom: 22 }).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 10.0;
+                // An episode leads back to its show.
+                if let Some((show_id, show_title)) = &show {
+                    let code = movie.episode_code().unwrap_or_default();
+                    let back = ui.add(
+                        egui::Label::new(RichText::new(format!("{} {show_title}  ·  {code}", icons::CARET_LEFT)).size(14.0).color(p.text_weak))
+                            .sense(Sense::click()),
+                    );
+                    let back = widgets::named(back, &format!("Back to {show_title}")).on_hover_text("All episodes").on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if back.clicked() {
+                        app.actions.push(Action::ShowShow(*show_id));
+                    }
+                }
                 ui.add(egui::Label::new(theme::bold(&movie.title).size(26.0).color(p.text).extra_letter_spacing(-0.4)).wrap());
 
                 ui.horizontal_wrapped(|ui| {
@@ -95,7 +168,7 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
                         if widgets::icon_button(ui, icons::PENCIL, "Edit title").clicked() {
                             app.actions.push(Action::EditTitle(id));
                         }
-                        if app.settings.tmdb_enabled() && widgets::icon_button(ui, icons::CLOUD_ARROW_DOWN, "Find on TMDb").clicked() {
+                        if app.settings.tmdb_enabled() && show.is_none() && widgets::icon_button(ui, icons::CLOUD_ARROW_DOWN, "Find on TMDb").clicked() {
                             app.actions.push(Action::OpenTmdbSearch(id));
                         }
                         if widgets::icon_button(ui, icons::FOLDER_OPEN, "Show in folder").clicked() {
@@ -233,12 +306,7 @@ pub fn panel(app: &mut DropReelApp, ui: &mut egui::Ui) {
                     app.actions.push(Action::AskRemove(id));
                 }
             });
-        });
     });
-    // Dragged shut by its edge.
-    if !open && app.selected.is_some() {
-        app.actions.push(Action::CloseDetails);
-    }
 }
 
 fn tracks_text(tracks: &[crate::library::TrackInfo]) -> String {
@@ -252,7 +320,7 @@ fn tracks_text(tracks: &[crate::library::TrackInfo]) -> String {
         .join("\n")
 }
 
-fn tag_chip(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
+pub fn tag_chip(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
     let p = palette(ui.ctx());
     let label = if on {
         format!("{} {name}", icons::CHECK)

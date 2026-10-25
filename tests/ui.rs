@@ -702,6 +702,50 @@ fn watching_to_the_end_marks_watched_and_returns_to_the_library() {
 }
 
 #[test]
+fn shows_group_their_episodes_and_play_them_in_order() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let tv = root.path().join("TV");
+    let season = tv.join("Test Show").join("Season 1");
+    copy_into(&fx.mkv, &season, Some("Test.Show.S01E01.Pilot.mkv"));
+    copy_into(&fx.webm, &season, Some("S01E02.webm"));
+    let mut app = launch(root.path(), vec![]);
+    drop_files(&mut app, std::slice::from_ref(&tv));
+    until(&mut app, "the show", |a| {
+        has(a, "Test Show") && has(a, "Shows")
+    });
+    // One card for the show, none for its episodes. (Its middle is a play button.)
+    assert!(!has(&app, "Pilot"));
+    click(&mut app, "More info: Test Show");
+    until(&mut app, "the episodes", |a| {
+        has(a, "S01E01 Pilot") && has(a, "S01E02 Episode 2")
+    });
+
+    click(&mut app, "Play S01E01");
+    until(&mut app, "the player", in_player);
+    // At the end, the next episode is offered rather than going back to the library.
+    until(&mut app, "the Up next card", |a| has(a, "Play now"));
+    assert!(in_player(&app));
+    click(&mut app, "Play now");
+    let episode = |n: u32| {
+        db(root.path())
+            .all_movies()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.episode == Some(n))
+            .unwrap()
+    };
+    until(&mut app, "the second episode", |a| {
+        in_player(a) && episode(2).last_played.is_some()
+    });
+    assert!(episode(1).watched);
+    // The last episode ends like a movie.
+    until(&mut app, "the end of the show", |a| !in_player(a));
+    until(&mut app, "the toast", |a| has_text(a, "Finished"));
+    assert!(episode(2).watched);
+}
+
+#[test]
 fn unplayable_file_shows_an_error_and_returns_to_the_library() {
     let Some(fx) = playback_setup() else { return };
     let root = tempfile::tempdir().unwrap();

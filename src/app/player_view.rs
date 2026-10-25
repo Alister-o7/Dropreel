@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32, Key, Modifiers, Rect, RichText, Sense, Vec2, pos2, vec2};
+use eframe::egui::{
+    self, Color32, Key, Modifiers, Rect, RichText, Sense, Stroke, Vec2, pos2, vec2,
+};
 
 use super::icons;
 use super::theme::{self, media};
@@ -23,9 +25,18 @@ pub const BAR_HEIGHT: f32 = 104.0;
 /// Fraction of the movie after which it counts as watched.
 pub const WATCHED_FRACTION: f64 = 0.95;
 
+/// How long the "Up next" card counts down before the next episode starts.
+pub const UP_NEXT_AFTER: Duration = Duration::from_secs(8);
+
 pub struct NowPlaying {
     pub movie_id: MovieId,
     pub title: String,
+    /// For an episode: "S01E02 · Episode title", under the show's title.
+    pub subtitle: Option<String>,
+    /// The episode after this one: its id and "S01E03 · Title".
+    pub next: Option<(MovieId, String)>,
+    /// When the episode ended and the "Up next" countdown began.
+    up_next_since: Option<Instant>,
     /// Duration from the library, used until mpv knows it.
     pub known_duration: Option<f64>,
     last_save: Instant,
@@ -45,6 +56,9 @@ impl NowPlaying {
         Self {
             movie_id,
             title,
+            subtitle: None,
+            next: None,
+            up_next_since: None,
             known_duration,
             last_save: Instant::now(),
             last_activity: Instant::now(),
@@ -148,11 +162,21 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
         }
         // Wait for the mouse to be released so dragging to the end doesn't exit mid-drag.
         if player.eof_reached() && np.seek_drag.is_none() && !ctx.input(|i| i.pointer.any_down()) {
-            actions.push(Action::StopPlayback { finished: true });
+            // An episode with another after it counts down to that one instead.
+            if np.next.is_some() {
+                let since = *np.up_next_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= UP_NEXT_AFTER {
+                    actions.push(Action::PlayNextEpisode { finished: true });
+                }
+            } else {
+                actions.push(Action::StopPlayback { finished: true });
+            }
+        } else {
+            np.up_next_since = None;
         }
     }
 
-    handle_keys(&ctx, player, actions);
+    handle_keys(&ctx, player, actions, np.next.is_some());
 
     let fullscreen = is_fullscreen(&ctx);
     if ctx.input(|i| {
@@ -213,7 +237,13 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 controls_opacity,
                 settings.time_display,
             );
-            if !recently_active && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p)) {
+            if let (Some(since), Some((_, next))) = (np.up_next_since, &np.next) {
+                up_next(ui, rect, next, since, actions);
+            }
+            if !recently_active
+                && np.up_next_since.is_none()
+                && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p))
+            {
                 ctx.set_cursor_icon(egui::CursorIcon::None);
             }
         });
@@ -229,7 +259,12 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     }
 }
 
-fn handle_keys(ctx: &egui::Context, player: &mut Player, actions: &mut Vec<Action>) {
+fn handle_keys(
+    ctx: &egui::Context,
+    player: &mut Player,
+    actions: &mut Vec<Action>,
+    has_next: bool,
+) {
     if ctx.text_edit_focused() {
         return;
     }
@@ -266,6 +301,9 @@ fn handle_keys(ctx: &egui::Context, player: &mut Player, actions: &mut Vec<Actio
     if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F)) {
         toggle_fullscreen(ctx);
     }
+    if has_next && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::N)) {
+        actions.push(Action::PlayNextEpisode { finished: false });
+    }
     // With a track menu open, Esc just closes the menu (egui handles that).
     if !egui::Popup::is_any_open(ctx)
         && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
@@ -276,6 +314,60 @@ fn handle_keys(ctx: &egui::Context, player: &mut Player, actions: &mut Vec<Actio
             actions.push(Action::StopPlayback { finished: false });
         }
     }
+}
+
+/// The card at the end of an episode: what's next, a countdown, and Play now / Cancel.
+fn up_next(ui: &mut egui::Ui, rect: Rect, next: &str, since: Instant, actions: &mut Vec<Action>) {
+    let left = UP_NEXT_AFTER.saturating_sub(since.elapsed()).as_secs_f32();
+    let size = vec2(340.0, 132.0);
+    let card = Rect::from_min_size(
+        rect.right_bottom() - size - vec2(32.0, BAR_HEIGHT + 24.0),
+        size,
+    );
+    let builder = egui::UiBuilder::new().max_rect(card);
+    ui.scope_builder(builder, |ui| {
+        *ui.visuals_mut() = theme::visuals(&theme::DARK);
+        egui::Frame::new()
+            .fill(Color32::from_rgba_unmultiplied(20, 20, 20, 235))
+            .stroke(Stroke::new(1.0, media::HAIRLINE))
+            .corner_radius(theme::radius::PANEL)
+            .inner_margin(16)
+            .show(ui, |ui| {
+                ui.set_width(size.x - 32.0);
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.label(
+                    RichText::new("UP NEXT")
+                        .size(11.5)
+                        .color(media::TEXT_WEAK)
+                        .extra_letter_spacing(0.8),
+                );
+                ui.add(
+                    egui::Label::new(theme::bold(next).size(16.0).color(media::TEXT)).truncate(),
+                );
+                ui.label(
+                    RichText::new(format!("Plays in {:.0} s", left.ceil()))
+                        .size(12.5)
+                        .color(media::TEXT_WEAK),
+                );
+                ui.horizontal(|ui| {
+                    let play = widgets::button(
+                        ui,
+                        widgets::ButtonKind::Primary,
+                        Some(icons::PLAY),
+                        "Play now",
+                    );
+                    if play.clicked() {
+                        actions.push(Action::PlayNextEpisode { finished: true });
+                    }
+                    if widgets::button(ui, widgets::ButtonKind::Secondary, None, "Cancel").clicked()
+                    {
+                        actions.push(Action::StopPlayback { finished: true });
+                    }
+                });
+            });
+    });
+    // Tick the countdown.
+    ui.ctx().request_repaint_after(Duration::from_millis(200));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -312,13 +404,19 @@ fn controls(
         Color32::TRANSPARENT,
         media::SCRIM_STRONG,
     );
-    painter.text(
-        top.left_center() + vec2(24.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        &np.title,
-        theme::font(20.0, "bold"),
-        media::TEXT,
-    );
+    let title = painter.layout_no_wrap(np.title.clone(), theme::font(20.0, "bold"), media::TEXT);
+    let title_pos = top.left_center() + vec2(24.0, -title.size().y / 2.0);
+    if let Some(sub) = &np.subtitle {
+        // The show's name, then the episode beside it, lighter.
+        let sub =
+            painter.layout_no_wrap(sub.clone(), theme::font(16.0, "medium"), media::TEXT_WEAK);
+        let sub_pos = pos2(
+            title_pos.x + title.size().x + 12.0,
+            title_pos.y + title.size().y - sub.size().y - 1.0,
+        );
+        painter.galley(sub_pos, sub, media::TEXT_WEAK);
+    }
+    painter.galley(title_pos, title, media::TEXT);
     np.controls_hovered = ui
         .ctx()
         .pointer_hover_pos()
@@ -388,6 +486,13 @@ fn controls(
                         .clicked()
                     {
                         player.seek_relative(10.0);
+                    }
+                    if let Some((_, next)) = &np.next {
+                        ui.add_space(4.0);
+                        let tip = format!("Next episode (N): {next}");
+                        if player_button(ui, icons::SKIP_FORWARD, 22.0, &tip).clicked() {
+                            actions.push(Action::PlayNextEpisode { finished: false });
+                        }
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

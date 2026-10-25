@@ -30,7 +30,10 @@ pub enum ImportProgress {
 
 #[derive(Clone, Debug, Default)]
 pub struct ImportReport {
+    /// Titles of the movies and episodes added.
     pub added: Vec<String>,
+    /// How many of `added` are episodes of shows.
+    pub added_episodes: usize,
     /// Missing movies found at a new location: (title, new path).
     pub relinked: Vec<(String, PathBuf)>,
     /// Files that were not added, with the reason (e.g. duplicates).
@@ -65,11 +68,16 @@ impl ImportReport {
             }
         };
         let mut parts = Vec::new();
-        if !self.added.is_empty() {
-            parts.push(format!(
-                "added {}",
-                plural(self.added.len(), "movie", "movies")
-            ));
+        let movies = self.added.len() - self.added_episodes;
+        let added: Vec<String> = [
+            (movies > 0).then(|| plural(movies, "movie", "movies")),
+            (self.added_episodes > 0).then(|| plural(self.added_episodes, "episode", "episodes")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !added.is_empty() {
+            parts.push(format!("added {}", added.join(" and ")));
         }
         if !self.relinked.is_empty() {
             parts.push(format!(
@@ -270,13 +278,21 @@ pub fn run_import(
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let (title, year) = filename::parse_title_year(&stem);
+        let episode = filename::parse_episode(&path);
+        let is_episode = episode.is_some();
+        let added = match &episode {
+            Some(ep) => format!("{} S{:02}E{:02}", ep.show, ep.season, ep.episode),
+            None => title.clone(),
+        };
         match db.insert_movie(&NewMovie {
             file: c.info,
-            title: title.clone(),
+            title,
             year,
+            episode,
         }) {
             Ok(id) => {
-                report.added.push(title);
+                report.added.push(added);
+                report.added_episodes += usize::from(is_episode);
                 if let Some(w) = c.warning {
                     report.warnings.push((path.clone(), w));
                 }
@@ -319,6 +335,27 @@ pub fn run_import(
             .collect()
     });
     report.warnings.extend(warnings);
+
+    // New shows are looked up on TMDb once each, after their episodes are in.
+    if !env.tmdb_key.is_empty() {
+        let mut shows: Vec<_> = new_movies
+            .iter()
+            .filter_map(|(id, ..)| db.movie(*id).ok().flatten()?.show_id)
+            .collect();
+        shows.sort_unstable();
+        shows.dedup();
+        for show in shows {
+            if db
+                .show(show)
+                .ok()
+                .flatten()
+                .is_some_and(|s| s.tmdb_id.is_none())
+                && let Err(e) = metadata::fetch_show_metadata(env, &db, show)
+            {
+                tracing::warn!("TMDb lookup for show {show} failed: {e}");
+            }
+        }
+    }
     on_change();
     Ok(report)
 }
