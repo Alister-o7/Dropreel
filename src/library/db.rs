@@ -331,9 +331,20 @@ impl Db {
     }
 
     /// Replaces the file behind a movie (after a re-encode), keeping its metadata, tags and
-    /// resume position.
+    /// resume position. A watched folder may already have added the new file as a movie of its
+    /// own; that entry is dropped. The old file is remembered as removed, so watched folders
+    /// don't add it back as a second copy of the movie (an explicit add still can).
     pub fn replace_file(&self, id: MovieId, f: &FileInfo) -> anyhow::Result<()> {
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO ignored_paths (path) SELECT path FROM movies WHERE id = ?1",
+            [id],
+        )?;
+        tx.execute(
+            "DELETE FROM movies WHERE path = ?2 AND id != ?1",
+            params![id, path_to_sql(&f.path)],
+        )?;
+        tx.execute(
             "UPDATE movies SET path = ?2, size = ?3, fingerprint = ?4, duration = ?5,
                 video_codec = ?6, width = ?7, height = ?8, audio_tracks = ?9, subtitle_tracks = ?10
              WHERE id = ?1",
@@ -350,6 +361,11 @@ impl Db {
                 tracks_to_sql(&f.subtitle_tracks),
             ],
         )?;
+        tx.execute(
+            "DELETE FROM ignored_paths WHERE path = ?1",
+            [path_to_sql(&f.path)],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -637,6 +653,35 @@ mod tests {
 
         // A duplicate path is rejected by the UNIQUE constraint.
         assert!(db.insert_movie(&sample("D:/moved.mkv", "x")).is_err());
+    }
+
+    #[test]
+    fn a_re_encode_replaces_the_file_without_leaving_a_second_copy() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db
+            .insert_movie(&sample("G:/Films/Heat.mkv", "big"))
+            .unwrap();
+        db.set_resume(id, Some(600.0)).unwrap();
+        // A watched folder spotted the new file first and added it as a movie of its own.
+        let early = db
+            .insert_movie(&sample("G:/Films/Heat.hevc.mkv", "small"))
+            .unwrap();
+
+        let mut encoded = sample("G:/Films/Heat.hevc.mkv", "small").file;
+        encoded.size = 4_000_000_000;
+        db.replace_file(id, &encoded).unwrap();
+
+        let movies = db.all_movies().unwrap();
+        assert_eq!(movies.len(), 1, "{movies:?}");
+        assert_eq!(movies[0].id, id);
+        assert_eq!(movies[0].size, 4_000_000_000);
+        assert_eq!(movies[0].resume_pos, Some(600.0));
+        assert!(db.movie(early).unwrap().is_none());
+        // Watched folders won't add the original back while it's still on disk.
+        assert_eq!(
+            db.ignored_paths().unwrap(),
+            vec![PathBuf::from("G:/Films/Heat.mkv")]
+        );
     }
 
     #[test]

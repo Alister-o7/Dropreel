@@ -31,7 +31,8 @@ pub fn paint_poster(
     let poll = poster.map(|path| {
         ui.ctx().try_load_texture(
             &file_uri(path),
-            egui::TextureOptions::LINEAR,
+            // Mipmapped, so large posters stay crisp when drawn small.
+            theme::SMOOTH,
             egui::SizeHint::default(),
         )
     });

@@ -477,6 +477,58 @@ fn small_window_renders_every_screen() {
     run_for(&mut app, Duration::from_millis(300));
 }
 
+#[test]
+fn toolbar_items_never_overlap() {
+    let (Some(_), Some(fx)) = (tools(), fixtures()) else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.multitrack, &root.path().join("movies"), None);
+    let mut app = launch_sized(root.path(), vec![], egui::vec2(1280.0, 800.0));
+    drop_files(&mut app, &[file]);
+    click(&mut app, "Details: Multi Track");
+    until(&mut app, "details", |a| has(a, "Remove from library"));
+    // From roomy to the narrowest window, with the details panel taking its share.
+    for width in [1280.0, 1100.0, 960.0, 860.0, 760.0] {
+        app.set_size(egui::vec2(width, 800.0));
+        run_for(&mut app, Duration::from_millis(200));
+        let names = [
+            "All movies",
+            "Search movies",
+            "Sort: Title",
+            "Reverse order",
+            "Poster grid",
+            "List view",
+            "Settings",
+        ];
+        // The page title is the last "All movies" (the first is the sidebar's).
+        let rects: Vec<(&str, egui::Rect)> = names
+            .iter()
+            .filter_map(|&name| {
+                let rect = app
+                    .root()
+                    .children_recursive()
+                    .filter(|n| {
+                        n.accesskit_node().label().as_deref() == Some(name)
+                            || n.accesskit_node().value().as_deref() == Some(name)
+                    })
+                    .last()?
+                    .rect();
+                Some((name, rect))
+            })
+            .collect();
+        assert_eq!(rects.len(), names.len(), "at {width}: {rects:?}");
+        for (i, (a, ra)) in rects.iter().enumerate() {
+            for (b, rb) in &rects[i + 1..] {
+                assert!(
+                    !ra.shrink(1.0).intersects(rb.shrink(1.0)),
+                    "at {width} wide, {a} {ra:?} overlaps {b} {rb:?}"
+                );
+            }
+        }
+    }
+}
+
 // ----- playback through the UI -----
 
 fn playback_setup() -> Option<&'static common::Fixtures> {

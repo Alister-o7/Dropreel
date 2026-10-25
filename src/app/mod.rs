@@ -944,6 +944,13 @@ impl DropReelApp {
         };
         match result {
             Ok(()) => {
+                // An entry still pointing at the original (added back by an older version, or by
+                // hand) would only show up as missing now.
+                if let Ok(Some(stale)) = self.db.find_by_path(original)
+                    && stale != outcome.movie_id
+                {
+                    self.actions.push(Action::Remove(stale));
+                }
                 let verb = if choice == OriginalChoice::Trash {
                     "Moved the original to the Recycle Bin"
                 } else {

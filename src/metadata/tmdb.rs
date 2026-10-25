@@ -6,7 +6,8 @@ use std::time::Duration;
 use serde::Deserialize;
 
 const API: &str = "https://api.themoviedb.org/3";
-const IMAGES: &str = "https://image.tmdb.org/t/p/w500";
+/// Posters 780 pixels wide: sharp on high-DPI screens without TMDb's multi-megabyte originals.
+const IMAGES: &str = "https://image.tmdb.org/t/p/w780";
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct TmdbMovie {
@@ -88,6 +89,23 @@ impl TmdbClient {
             results = self.search(title, None)?;
         }
         Ok(best_match(results, year))
+    }
+
+    /// The current poster of a movie TMDb already matched.
+    pub fn poster_path(&self, tmdb_id: i64) -> Result<Option<String>, String> {
+        let resp = self
+            .get(&format!("{API}/movie/{tmdb_id}"))
+            .send()
+            .map_err(|e| format!("TMDb request failed: {e}"))?;
+        match resp.status().as_u16() {
+            200 => {}
+            401 => return Err("TMDb rejected the API key. Check it in Settings.".into()),
+            code => return Err(format!("TMDb returned HTTP {code}")),
+        }
+        let movie: TmdbMovie = resp
+            .json()
+            .map_err(|e| format!("unexpected TMDb response: {e}"))?;
+        Ok(movie.poster_path)
     }
 
     pub fn download_poster(&self, poster_path: &str, out: &Path) -> Result<(), String> {

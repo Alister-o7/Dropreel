@@ -283,6 +283,9 @@ pub fn encode_progress_text(s: &crate::encode::EncodeStatus) -> String {
     parts.join(" · ")
 }
 
+/// Narrowest search box worth putting next to the title on one line.
+const MIN_ONE_ROW_SEARCH: f32 = 200.0;
+
 pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
     let p = palette(ui.ctx());
     let frame = egui::Frame::new().fill(p.bg).inner_margin(Margin {
@@ -292,102 +295,187 @@ pub fn toolbar(app: &mut DropReelApp, ui: &mut egui::Ui) {
         bottom: 10,
     });
     egui::Panel::top("toolbar").frame(frame).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            let title = match app
-                .filter
-                .tag
-                .and_then(|t| app.lib.tags.iter().find(|tag| tag.id == t))
-            {
-                Some(tag) => format!("{} {}", icons::TAG, tag.name),
-                None => app.filter.shelf.label().to_string(),
-            };
-            ui.label(
-                theme::bold(title)
-                    .size(26.0)
-                    .color(p.text)
-                    .extra_letter_spacing(-0.4),
-            );
-            widgets::chip(ui, None, &app.visible.len().to_string());
-
-            ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
-                if widgets::icon_button(ui, icons::GEAR, "Settings").clicked() {
-                    app.actions.push(Action::OpenSettings);
-                }
-                ui.add_space(4.0);
-                egui::Frame::new()
-                    .fill(p.raised)
-                    .corner_radius(radius::CONTROL + 2)
-                    .inner_margin(2)
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        if widgets::icon_toggle(
-                            ui,
-                            icons::LIST,
-                            app.prefs.layout == Layout::List,
-                            "List view",
-                        )
-                        .clicked()
-                        {
-                            app.prefs.layout = Layout::List;
-                        }
-                        if widgets::icon_toggle(
-                            ui,
-                            icons::SQUARES_FOUR,
-                            app.prefs.layout == Layout::Grid,
-                            "Poster grid",
-                        )
-                        .clicked()
-                        {
-                            app.prefs.layout = Layout::Grid;
-                        }
-                    });
-                ui.add_space(4.0);
-                let dir_icon = if app.filter.descending {
-                    icons::SORT_DESCENDING
-                } else {
-                    icons::SORT_ASCENDING
-                };
-                if widgets::icon_button(ui, dir_icon, "Reverse order").clicked() {
-                    app.filter.descending = !app.filter.descending;
-                    app.filter_dirty = true;
-                }
-                let before = app.filter.sort;
-                let sort_label = format!("Sort: {}", app.filter.sort.label());
-                let sort = egui::ComboBox::from_id_salt("sort")
-                    .selected_text(&sort_label)
-                    .width(150.0)
-                    .show_ui(ui, |ui| {
-                        for key in SortKey::ALL {
-                            ui.selectable_value(&mut app.filter.sort, key, key.label());
-                        }
-                    });
-                widgets::name_combo(&sort.response, &sort_label);
-                if before != app.filter.sort {
-                    app.filter.descending = app.filter.sort.default_descending();
-                    app.filter_dirty = true;
-                }
-                ui.add_space(6.0);
-                // Takes what the title leaves over, up to a comfortable width.
-                // (The frame's margins take another 28 points.)
-                let search_w = (ui.available_width() - 32.0).clamp(64.0, 250.0);
-                search_box(app, ui, search_w);
-                if app.imports_running > 0 {
-                    ui.add_space(8.0);
-                    let text = match app.import_progress {
-                        Some(super::ImportProgress::Reading { done, total }) => {
-                            format!("Reading {done}/{total}")
-                        }
-                        Some(super::ImportProgress::Metadata { done, total }) => {
-                            format!("Posters {done}/{total}")
-                        }
-                        _ => "Scanning…".to_string(),
-                    };
-                    ui.label(RichText::new(text).color(p.text_weak));
-                    ui.add(egui::Spinner::new().size(16.0).color(p.accent));
-                }
+        let title = match app
+            .filter
+            .tag
+            .and_then(|t| app.lib.tags.iter().find(|tag| tag.id == t))
+        {
+            Some(tag) => format!("{} {}", icons::TAG, tag.name),
+            None => app.filter.shelf.label().to_string(),
+        };
+        let title = theme::bold(title)
+            .size(26.0)
+            .color(p.text)
+            .extra_letter_spacing(-0.4);
+        let count = app.visible.len().to_string();
+        let title_w = egui::WidgetText::from(title.clone())
+            .into_galley(
+                ui,
+                Some(egui::TextWrapMode::Extend),
+                f32::INFINITY,
+                egui::TextStyle::Body,
+            )
+            .size()
+            .x;
+        // The controls' width from the last frame (the search box aside).
+        let controls_id = Id::unique("toolbar-controls-width");
+        let controls_w = ui.data(|d| d.get_temp::<f32>(controls_id)).unwrap_or(330.0);
+        // One line when the title, its count, the controls and a usable search box all fit;
+        // otherwise the title gets a line of its own, so nothing is drawn over anything else.
+        let one_row = ui.available_width() >= title_w + 60.0 + controls_w + MIN_ONE_ROW_SEARCH;
+        if one_row {
+            ui.horizontal(|ui| {
+                ui.label(title);
+                widgets::chip(ui, None, &count);
+                ui.with_layout(UiLayout::right_to_left(Align::Center), |ui| {
+                    let used = ui
+                        .scope(|ui| controls(app, ui, true, false))
+                        .response
+                        .rect
+                        .width();
+                    ui.data_mut(|d| d.insert_temp(controls_id, used));
+                    ui.add_space(6.0);
+                    // Takes what the title leaves over, up to a comfortable width.
+                    // (The frame's margins take another 28 points.)
+                    let search_w = (ui.available_width() - 32.0).clamp(64.0, 250.0);
+                    search_box(app, ui, search_w);
+                    import_status(app, ui);
+                });
             });
-        });
+        } else {
+            ui.horizontal(|ui| {
+                ui.scope(|ui| {
+                    ui.set_max_width((ui.available_width() - 60.0).max(40.0));
+                    ui.add(egui::Label::new(title).truncate());
+                });
+                widgets::chip(ui, None, &count);
+            });
+            ui.add_space(6.0);
+            // Left to right, wrapping onto another line rather than overlapping. When the search
+            // box and the controls can't share a line, the search box gets a line of its own.
+            let compact = ui.available_width() < 480.0;
+            let shared = ui.available_width() >= 160.0 + controls_w;
+            if !shared {
+                let search_w = (ui.available_width() - 32.0).clamp(64.0, 400.0);
+                ui.horizontal(|ui| search_box(app, ui, search_w));
+                ui.add_space(6.0);
+            }
+            ui.horizontal_wrapped(|ui| {
+                if shared {
+                    let search_w = (ui.available_width() - controls_w - 40.0).clamp(120.0, 250.0);
+                    search_box(app, ui, search_w);
+                    ui.add_space(6.0);
+                }
+                controls(app, ui, false, compact);
+                import_status(app, ui);
+            });
+        }
     });
+}
+
+/// Sort, reverse, grid/list and settings, added in reading order unless `right_to_left`.
+/// `compact` drops the sort box's "Sort:" prefix to save room.
+fn controls(app: &mut DropReelApp, ui: &mut egui::Ui, right_to_left: bool, compact: bool) {
+    if right_to_left {
+        settings_button(app, ui);
+        ui.add_space(4.0);
+        view_toggles(app, ui);
+        ui.add_space(4.0);
+        reverse_button(app, ui);
+        sort_combo(app, ui, compact);
+    } else {
+        sort_combo(app, ui, compact);
+        reverse_button(app, ui);
+        ui.add_space(4.0);
+        view_toggles(app, ui);
+        ui.add_space(4.0);
+        settings_button(app, ui);
+    }
+}
+
+fn settings_button(app: &mut DropReelApp, ui: &mut egui::Ui) {
+    if widgets::icon_button(ui, icons::GEAR, "Settings").clicked() {
+        app.actions.push(Action::OpenSettings);
+    }
+}
+
+fn view_toggles(app: &mut DropReelApp, ui: &mut egui::Ui) {
+    let p = palette(ui.ctx());
+    egui::Frame::new()
+        .fill(p.raised)
+        .corner_radius(radius::CONTROL + 2)
+        .inner_margin(2)
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            // Grid then list, reading left to right, whichever way the toolbar lays out.
+            let mut order = [Layout::Grid, Layout::List];
+            if ui.layout().prefer_right_to_left() {
+                order.reverse();
+            }
+            for layout in order {
+                let (icon, name) = match layout {
+                    Layout::Grid => (icons::SQUARES_FOUR, "Poster grid"),
+                    Layout::List => (icons::LIST, "List view"),
+                };
+                if widgets::icon_toggle(ui, icon, app.prefs.layout == layout, name).clicked() {
+                    app.prefs.layout = layout;
+                }
+            }
+        });
+}
+
+fn reverse_button(app: &mut DropReelApp, ui: &mut egui::Ui) {
+    let dir_icon = if app.filter.descending {
+        icons::SORT_DESCENDING
+    } else {
+        icons::SORT_ASCENDING
+    };
+    if widgets::icon_button(ui, dir_icon, "Reverse order").clicked() {
+        app.filter.descending = !app.filter.descending;
+        app.filter_dirty = true;
+    }
+}
+
+fn sort_combo(app: &mut DropReelApp, ui: &mut egui::Ui, compact: bool) {
+    let before = app.filter.sort;
+    let sort_label = format!("Sort: {}", app.filter.sort.label());
+    let (shown, width) = if compact {
+        (app.filter.sort.label().to_string(), 110.0)
+    } else {
+        (sort_label.clone(), 150.0)
+    };
+    let sort = egui::ComboBox::from_id_salt("sort")
+        .selected_text(shown)
+        .width(width)
+        .show_ui(ui, |ui| {
+            for key in SortKey::ALL {
+                ui.selectable_value(&mut app.filter.sort, key, key.label());
+            }
+        });
+    widgets::name_combo(&sort.response, &sort_label);
+    if before != app.filter.sort {
+        app.filter.descending = app.filter.sort.default_descending();
+        app.filter_dirty = true;
+    }
+}
+
+fn import_status(app: &DropReelApp, ui: &mut egui::Ui) {
+    if app.imports_running == 0 {
+        return;
+    }
+    let p = palette(ui.ctx());
+    ui.add_space(8.0);
+    let text = match app.import_progress {
+        Some(super::ImportProgress::Reading { done, total }) => {
+            format!("Reading {done}/{total}")
+        }
+        Some(super::ImportProgress::Metadata { done, total }) => {
+            format!("Posters {done}/{total}")
+        }
+        _ => "Scanning…".to_string(),
+    };
+    ui.label(RichText::new(text).color(p.text_weak));
+    ui.add(egui::Spinner::new().size(16.0).color(p.accent));
 }
 
 fn search_box(app: &mut DropReelApp, ui: &mut egui::Ui, width: f32) {

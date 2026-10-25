@@ -18,6 +18,10 @@ fn new_poster_path(posters: &Path, id: MovieId, kind: &str) -> PathBuf {
     posters.join(format!("{id}-{kind}-{stamp}.jpg"))
 }
 
+/// Kind in the file names of TMDb posters, which says their size: older versions saved
+/// 500-pixel posters as `-tmdb-`.
+const TMDB_KIND: &str = "tmdb780";
+
 /// Whether a poster is a frame grabbed from the movie (rather than artwork from TMDb).
 pub fn is_frame_poster(poster: &Path) -> bool {
     poster
@@ -60,7 +64,7 @@ pub fn apply_tmdb_match(
     )
     .map_err(|e| e.to_string())?;
     if let Some(poster) = &m.poster_path {
-        let out = new_poster_path(&env.posters_dir, id, "tmdb");
+        let out = new_poster_path(&env.posters_dir, id, TMDB_KIND);
         client.download_poster(poster, &out)?;
         replace_poster(env, db, id, &out).map_err(|e| e.to_string())?;
     }
@@ -126,6 +130,69 @@ pub fn upgrade_frame_posters(env: &LibraryEnv, db: &Db, on_upgrade: &dyn Fn()) -
                 on_upgrade();
             }
             Err(e) => tracing::warn!("could not upgrade the poster of \"{}\": {e}", movie.title),
+        }
+    }
+    upgraded
+}
+
+/// Downloads TMDb posters again at the current size where older versions saved smaller ones. Calls `on_upgrade` after each one and returns how many were upgraded.
+pub fn upgrade_tmdb_posters(env: &LibraryEnv, db: &Db, on_upgrade: &dyn Fn()) -> usize {
+    if env.tmdb_key.is_empty() {
+        return 0;
+    }
+    let movies = match db.all_movies() {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("could not list movies to upgrade posters: {e:#}");
+            return 0;
+        }
+    };
+    let stale: Vec<_> = movies
+        .into_iter()
+        .filter(|m| {
+            m.tmdb_id.is_some()
+                && m.poster.as_deref().is_some_and(|p| {
+                    let name = p.file_name().unwrap_or_default().to_string_lossy();
+                    // Only our own downloads, from before posters were named by their size.
+                    p.starts_with(&env.posters_dir) && name.contains("-tmdb-")
+                })
+        })
+        .collect();
+    if stale.is_empty() {
+        return 0;
+    }
+    let client = match TmdbClient::new(&env.tmdb_key) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("could not upgrade TMDb posters: {e}");
+            return 0;
+        }
+    };
+    let mut upgraded = 0;
+    for movie in stale {
+        let Some(tmdb_id) = movie.tmdb_id else {
+            continue;
+        };
+        let result = client.poster_path(tmdb_id).and_then(|path| {
+            let Some(path) = path else { return Ok(false) };
+            let out = new_poster_path(&env.posters_dir, movie.id, TMDB_KIND);
+            client.download_poster(&path, &out)?;
+            replace_poster(env, db, movie.id, &out).map_err(|e| e.to_string())?;
+            Ok(true)
+        });
+        match result {
+            Ok(true) => {
+                upgraded += 1;
+                on_upgrade();
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!("could not upgrade the poster of \"{}\": {e}", movie.title);
+                // Offline or a bad key: the rest would fail the same way.
+                if e.contains("request failed") || e.contains("rejected") {
+                    break;
+                }
+            }
         }
     }
     upgraded
