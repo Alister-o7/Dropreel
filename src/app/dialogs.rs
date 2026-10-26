@@ -293,13 +293,7 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
             });
 
             settings_section(ui, icons::CLOUD_ARROW_DOWN, "TMDb (optional)");
-            ui.add(
-                egui::TextEdit::singleline(&mut draft.tmdb_api_key)
-                    .password(true)
-                    .desired_width(ui.available_width())
-                    .hint_text("API key — leave empty to stay offline")
-                    .margin(Margin::symmetric(10, 6)),
-            );
+            tmdb_key_field(ui, &mut draft.tmdb_api_key);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.label(RichText::new("With a key, new movies get posters, years and plots from").color(p.text_weak));
@@ -427,6 +421,62 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
     } else if cancel || close {
         app.dialogs.settings = None;
     }
+}
+
+/// The TMDb key: hidden unless shown, with Paste and Show buttons and a right-click menu
+/// (a hidden field can't be copied from, and right-clicking a text box offers nothing by default).
+fn tmdb_key_field(ui: &mut egui::Ui, key: &mut String) {
+    let shown_id = egui::Id::unique("tmdb-key-shown");
+    let mut shown = ui.data(|d| d.get_temp::<bool>(shown_id)).unwrap_or(false);
+    ui.horizontal(|ui| {
+        let edit = ui.add(
+            egui::TextEdit::singleline(key)
+                .password(!shown)
+                .desired_width((ui.available_width() - 84.0).max(120.0))
+                .hint_text("API key — leave empty to stay offline")
+                .margin(Margin::symmetric(10, 6)),
+        );
+        ui.ctx()
+            .accesskit_node_builder(edit.id, |node| node.set_label("TMDb API key"));
+        let mut paste = false;
+        edit.context_menu(|ui| {
+            if ui.button("Paste").clicked() {
+                paste = true;
+                ui.close();
+            }
+            if ui
+                .add_enabled(!key.is_empty(), egui::Button::new("Copy"))
+                .clicked()
+            {
+                ui.ctx().copy_text(key.clone());
+                ui.close();
+            }
+            if ui
+                .add_enabled(!key.is_empty(), egui::Button::new("Clear"))
+                .clicked()
+            {
+                key.clear();
+                ui.close();
+            }
+        });
+        paste |= widgets::icon_button(ui, icons::CLIPBOARD, "Paste key").clicked();
+        let (icon, tip) = if shown {
+            (icons::EYE_SLASH, "Hide key")
+        } else {
+            (icons::EYE, "Show key")
+        };
+        if widgets::icon_button(ui, icon, tip).clicked() {
+            shown = !shown;
+        }
+        if paste {
+            match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
+                Ok(text) if !text.trim().is_empty() => *key = text.trim().to_string(),
+                Ok(_) => {}
+                Err(e) => tracing::warn!("could not read the clipboard: {e}"),
+            }
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(shown_id, shown));
 }
 
 fn path_list(ui: &mut egui::Ui, title: &str, items: &[(PathBuf, String)], color: Color32) {

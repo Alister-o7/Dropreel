@@ -162,9 +162,6 @@ pub mod media {
     /// Progress on posters and in the player: red over a grey track.
     pub const PROGRESS: Color32 = super::ramp::RED;
     pub const TRACK: Color32 = Color32::from_rgba_premultiplied(77, 77, 77, 200);
-    /// Round icon buttons over imagery: dark grey with a light rim.
-    pub const BUTTON: Color32 = Color32::from_rgba_premultiplied(25, 25, 25, 153);
-    pub const BUTTON_RIM: Color32 = Color32::from_rgba_premultiplied(128, 128, 128, 128);
 }
 
 pub fn palette(ctx: &egui::Context) -> &'static Palette {

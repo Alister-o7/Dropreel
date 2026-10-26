@@ -121,7 +121,27 @@ fn click_containing(app: &mut App, part: &str) {
     click_matching(app, part, |t| t.contains(part));
 }
 
+/// Opens a movie's details from its right-click menu (the middle of a poster plays it).
+fn open_details(app: &mut App, title: &str) {
+    // The play button is small enough to be fully on screen even in a tiny window.
+    let play = format!("Play movie: {title}");
+    settle_on(app, &play, |t| t == play).click_secondary();
+    app.step();
+    // Menu items read "<icon>   Details".
+    click_matching(app, "Details", |t| t.ends_with("   Details"));
+}
+
 fn click_matching(app: &mut App, what: &str, pred: impl Fn(&str) -> bool) {
+    settle_on(app, what, &pred).click();
+    app.step();
+}
+
+/// Waits for the node matching `pred` to be on screen and stay put, and returns it.
+fn settle_on<'a>(
+    app: &'a mut App,
+    what: &str,
+    pred: impl Fn(&str) -> bool,
+) -> egui_kittest::Node<'a> {
     until(app, &format!("\"{what}\""), |a| find(a, &pred).is_some());
     let screen = app.ctx.content_rect();
     let mut last = None;
@@ -137,8 +157,7 @@ fn click_matching(app: &mut App, what: &str, pred: impl Fn(&str) -> bool) {
         last = Some(rect);
         settled
     });
-    find(app, &pred).unwrap().click();
-    app.step();
+    find(app, &pred).unwrap()
 }
 
 /// Clicks into the search box and types.
@@ -318,7 +337,7 @@ fn removing_a_movie_keeps_the_file() {
     let file = copy_into(&fx.mp4, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, std::slice::from_ref(&file));
-    click(&mut app, "Details: Another Film");
+    open_details(&mut app, "Another Film");
     click(&mut app, "Remove from library");
     until(&mut app, "the confirmation", |a| {
         has(a, "Remove from library?")
@@ -384,9 +403,51 @@ fn settings_are_saved_to_disk() {
     assert!(text.contains("quality = \"best\""), "{text}");
     assert!(text.contains("time_display = \"normal\""), "{text}");
 
+    // The TMDb key can be typed (or pasted), shown, and is saved trimmed.
+    click(&mut app, "Settings");
+    until(&mut app, "the settings dialog", |a| has(a, "Smooth motion"));
+    let key_node = |a: &App| {
+        a.root()
+            .children_recursive()
+            .find(|n| n.accesskit_node().label().as_deref() == Some("TMDb API key"))
+            .map(|n| n.accesskit_node().value())
+    };
+    until(&mut app, "the key field", |a| key_node(a).is_some());
+    let field = || {
+        |n: &egui_kittest::Node<'_>| n.accesskit_node().label().as_deref() == Some("TMDb API key")
+    };
+    app.root()
+        .children_recursive()
+        .find(field())
+        .unwrap()
+        .focus();
+    app.step();
+    app.root()
+        .children_recursive()
+        .find(field())
+        .unwrap()
+        .type_text(" abc123 ");
+    app.step();
+    click(&mut app, "Show key");
+    until(&mut app, "the key in plain text", |a| {
+        key_node(a).flatten().as_deref() == Some(" abc123 ")
+    });
+    assert!(has(&app, "Hide key"));
+    click(&mut app, "Save");
+    until(&mut app, "the dialog to close", |a| {
+        !has(a, "Smooth motion")
+    });
+    let text = std::fs::read_to_string(root.path().join("data").join("settings.toml")).unwrap();
+    assert!(text.contains("tmdb_api_key = \"abc123\""), "{text}");
+
     // Cancel throws changes away.
     click(&mut app, "Settings");
     until(&mut app, "the settings dialog", |a| has(a, "Smooth motion"));
+    // On screen, but below the dialog's scrolled-into-view part: bring it into view first.
+    find(&app, |t| t == "High-quality video scaling")
+        .unwrap()
+        .scroll_to_me();
+    run_for(&mut app, Duration::from_millis(200));
     click(&mut app, "High-quality video scaling");
     click(&mut app, "Cancel");
     let again = std::fs::read_to_string(root.path().join("data").join("settings.toml")).unwrap();
@@ -422,7 +483,7 @@ fn tags_can_be_renamed_and_deleted() {
     drop_files(&mut app, &[file]);
 
     // Tag the movie from its details panel.
-    click(&mut app, "Details: The Test Movie");
+    open_details(&mut app, "The Test Movie");
     until(&mut app, "details", |a| has(a, "Remove from library"));
     let field = app.get_by_label("New tag");
     field.focus();
@@ -473,7 +534,7 @@ fn small_window_renders_every_screen() {
     });
     click(&mut app, "Click to dismiss");
     until(&mut app, "the toast to go", |a| !has(a, "Click to dismiss"));
-    click(&mut app, "Details: Multi Track");
+    open_details(&mut app, "Multi Track");
     until(&mut app, "details", |a| has(a, "Remove from library"));
     click(&mut app, "Close");
     click(&mut app, "Settings");
@@ -492,7 +553,7 @@ fn toolbar_items_never_overlap() {
     let file = copy_into(&fx.multitrack, &root.path().join("movies"), None);
     let mut app = launch_sized(root.path(), vec![], egui::vec2(1280.0, 800.0));
     drop_files(&mut app, &[file]);
-    click(&mut app, "Details: Multi Track");
+    open_details(&mut app, "Multi Track");
     until(&mut app, "details", |a| has(a, "Remove from library"));
     // From roomy to the narrowest window, with the details panel taking its share.
     for width in [1280.0, 1100.0, 960.0, 860.0, 760.0] {
@@ -550,7 +611,23 @@ fn clicking_a_poster_plays_and_back_saves_the_position() {
     let file = copy_into(&fx.long, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, &[file]);
-    click(&mut app, "Long Take");
+    // Clicking the poster away from its play button opens the details; it doesn't play.
+    let corner = settle_on(&mut app, "Long Take", |t| t == "Long Take")
+        .rect()
+        .left_top()
+        + egui::vec2(20.0, 20.0);
+    app.event(egui::Event::PointerMoved(corner));
+    for pressed in [true, false] {
+        app.event(egui::Event::PointerButton {
+            pos: corner,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    until(&mut app, "the details", |a| has(a, "Remove from library"));
+    assert!(!in_player(&app));
+    click(&mut app, "Play movie: Long Take");
     until(&mut app, "the player", in_player);
     until(&mut app, "playback to reach 0:02", |a| {
         has(a, "Pause") && shown_position(a).is_some_and(|p| p >= 2)
@@ -588,7 +665,7 @@ fn clicking_a_poster_plays_and_back_saves_the_position() {
     assert!(has(&app, "Continue watching"));
 
     // Playing again offers to resume.
-    click(&mut app, "Long Take");
+    click(&mut app, "Play movie: Long Take");
     until(&mut app, "the resume prompt", |a| {
         has_text(a, "Resume from")
     });
@@ -616,7 +693,7 @@ fn start_over_from_the_resume_prompt_starts_at_zero() {
     drop(app);
 
     let mut app = launch(root.path(), vec![]);
-    click(&mut app, "Long Take");
+    click(&mut app, "Play movie: Long Take");
     until(&mut app, "the resume prompt", |a| {
         has(a, "Resume from 1:00")
     });
@@ -633,7 +710,7 @@ fn keyboard_controls_pause_and_seek() {
     let file = copy_into(&fx.long, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, &[file]);
-    click(&mut app, "Long Take");
+    click(&mut app, "Play movie: Long Take");
     until(&mut app, "playing", |a| in_player(a) && has(a, "Pause"));
 
     app.key_press(Key::Space);
@@ -659,7 +736,7 @@ fn time_left_display_counts_down() {
     let file = copy_into(&fx.long, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, &[file]);
-    click(&mut app, "Long Take");
+    click(&mut app, "Play movie: Long Take");
     until(&mut app, "playing", |a| in_player(a) && has(a, "Pause"));
     app.key_press(Key::Space);
     until(&mut app, "paused", |a| has(a, "Play"));
@@ -694,7 +771,7 @@ fn watching_to_the_end_marks_watched_and_returns_to_the_library() {
     let file = copy_into(&fx.mkv, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, &[file]);
-    click(&mut app, "The Test Movie");
+    click(&mut app, "Play movie: The Test Movie");
     until(&mut app, "the player", in_player);
     until(&mut app, "the end", |a| !in_player(a));
     until(&mut app, "the toast", |a| has_text(a, "Finished"));
@@ -702,7 +779,7 @@ fn watching_to_the_end_marks_watched_and_returns_to_the_library() {
     assert!(m.watched);
     assert_eq!(m.resume_pos, None);
     // Watched movies play from the start without asking.
-    click(&mut app, "The Test Movie");
+    click(&mut app, "Play movie: The Test Movie");
     until(&mut app, "the player", in_player);
     assert!(!has_text(&app, "Resume from"));
 }
@@ -763,7 +840,7 @@ fn unplayable_file_shows_an_error_and_returns_to_the_library() {
     });
     // The file is replaced by junk behind DropReel's back.
     std::fs::copy(&fx.garbage, &file).unwrap();
-    click(&mut app, "Another Film");
+    click(&mut app, "Play movie: Another Film");
     until(&mut app, "an error", |a| has_text(a, "Could not play"));
     until(&mut app, "the library", |a| !in_player(a));
 }
@@ -794,7 +871,7 @@ fn tracks_can_be_switched_from_the_player_bar() {
     let file = copy_into(&fx.multitrack, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, &[file]);
-    click(&mut app, "Multi Track");
+    click(&mut app, "Play movie: Multi Track");
     until(&mut app, "the audio menu", |a| {
         in_player(a) && has(a, "Audio: eng · aac mono")
     });
@@ -827,7 +904,7 @@ fn shortcuts_keep_working_after_clicking_player_buttons() {
     let file = copy_into(&fx.long, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, &[file]);
-    click(&mut app, "Long Take");
+    click(&mut app, "Play movie: Long Take");
     until(&mut app, "playing", |a| in_player(a) && has(a, "Pause"));
 
     // Pausing with the mouse leaves the button focused...
