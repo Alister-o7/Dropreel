@@ -1,6 +1,6 @@
 [package]
 name = "dropreel"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "A Windows movie library and player"
 license = "MIT"

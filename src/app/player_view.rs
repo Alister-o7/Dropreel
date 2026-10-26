@@ -25,6 +25,12 @@ pub const BAR_HEIGHT: f32 = 104.0;
 /// Fraction of the movie after which it counts as watched.
 pub const WATCHED_FRACTION: f64 = 0.95;
 
+/// How long the play/pause icon shows after a click on the picture.
+const CLICK_FLASH: Duration = Duration::from_millis(600);
+
+/// How long the volume level stays up after the volume last changed.
+const VOLUME_LEVEL_FOR: Duration = Duration::from_millis(1500);
+
 /// How long the "Up next" card counts down before the next episode starts.
 pub const UP_NEXT_AFTER: Duration = Duration::from_secs(8);
 
@@ -37,6 +43,13 @@ pub struct NowPlaying {
     pub next: Option<(MovieId, String)>,
     /// When the episode ended and the "Up next" countdown began.
     up_next_since: Option<Instant>,
+    /// A click on the picture played or paused it: when, and whether it is now paused.
+    click_flash: Option<(Instant, bool)>,
+    /// The volume last frame, and when it last changed (by slider, keys or anything else).
+    last_volume: Option<f64>,
+    volume_changed: Option<Instant>,
+    /// Whether the volume slider was being dragged last frame.
+    volume_dragging: bool,
     /// Duration from the library, used until mpv knows it.
     pub known_duration: Option<f64>,
     last_save: Instant,
@@ -59,6 +72,10 @@ impl NowPlaying {
             subtitle: None,
             next: None,
             up_next_since: None,
+            click_flash: None,
+            last_volume: None,
+            volume_changed: None,
+            volume_dragging: false,
             known_duration,
             last_save: Instant::now(),
             last_activity: Instant::now(),
@@ -211,8 +228,23 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 ui.painter().image(texture, rect, uv, Color32::WHITE);
             }
             let video = ui.interact(rect, ui.scope_id().with("video"), Sense::click());
+            let video = widgets::named(video, "Video");
+            // Like Netflix, a click on the picture plays or pauses. A double-click (two clicks:
+            // pause, then play again) toggles fullscreen.
+            if video.clicked() && np.loaded {
+                player.set_paused(!paused);
+                np.click_flash = Some((Instant::now(), !paused));
+            }
             if video.double_clicked() {
                 toggle_fullscreen(&ctx);
+            }
+            if let Some((at, now_paused)) = np.click_flash {
+                if at.elapsed() < CLICK_FLASH {
+                    click_flash(ui, rect.center(), at.elapsed(), now_paused);
+                    ctx.request_repaint();
+                } else {
+                    np.click_flash = None;
+                }
             }
             if !np.loaded {
                 ui.painter().text(
@@ -313,6 +345,22 @@ fn handle_keys(
         } else {
             actions.push(Action::StopPlayback { finished: false });
         }
+    }
+}
+
+/// The icon that answers a click on the picture: pause or play, growing and fading away.
+fn click_flash(ui: &egui::Ui, center: egui::Pos2, elapsed: Duration, paused: bool) {
+    let t = elapsed.as_secs_f32() / CLICK_FLASH.as_secs_f32();
+    let opacity = 1.0 - t;
+    let radius = 34.0 + 14.0 * t;
+    let painter = ui.painter();
+    painter.circle_filled(center, radius, media::SCRIM_STRONG.gamma_multiply(opacity));
+    let color = media::TEXT.gamma_multiply(opacity);
+    if paused {
+        let font = theme::icon_fill_font(radius * 0.9);
+        widgets::icon_centered(painter, center, icons::PAUSE, font, color);
+    } else {
+        widgets::play_icon(painter, center, radius * 0.9, color);
     }
 }
 
@@ -508,8 +556,37 @@ fn controls(
                         track_menu(ui, player, np, TrackKind::Subtitle);
                         track_menu(ui, player, np, TrackKind::Audio);
                         ui.add_space(8.0);
-                        let (volume, r) = line_slider(ui, 96.0, player.volume(), 130.0, "Volume");
-                        if r.on_hover_text(format!("Volume {volume:.0}%")).changed() {
+                        // The level shows while the volume changes, then fades. Its slot is always
+                        // there, so the slider doesn't shift.
+                        let level = player.volume();
+                        if np.last_volume.is_some_and(|v| (v - level).abs() > 0.01) {
+                            np.volume_changed = Some(Instant::now());
+                        }
+                        np.last_volume = Some(level);
+                        let recent = np
+                            .volume_changed
+                            .is_some_and(|t| t.elapsed() < VOLUME_LEVEL_FOR);
+                        let shown = ui.ctx().animate_bool_with_time(
+                            egui::Id::unique("volume-level"),
+                            recent || np.volume_dragging,
+                            0.2,
+                        );
+                        if recent {
+                            ui.ctx().request_repaint_after(Duration::from_millis(100));
+                        }
+                        let (slot, _) = ui.allocate_exact_size(vec2(40.0, 20.0), Sense::hover());
+                        if shown > 0.0 {
+                            ui.painter().text(
+                                slot.right_center(),
+                                egui::Align2::RIGHT_CENTER,
+                                format!("{level:.0}%"),
+                                theme::font(13.0, "medium"),
+                                media::TEXT.gamma_multiply(shown),
+                            );
+                        }
+                        let (volume, r) = line_slider(ui, 96.0, level, 130.0, "Volume");
+                        np.volume_dragging = r.dragged();
+                        if r.changed() {
                             player.set_volume(volume);
                         }
                         let muted = player.muted();
