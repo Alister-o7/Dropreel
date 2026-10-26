@@ -41,8 +41,10 @@ pub struct NowPlaying {
     pub subtitle: Option<String>,
     /// The episode after this one: its id and "S01E03 · Title".
     pub next: Option<(MovieId, String)>,
-    /// When the episode ended and the "Up next" countdown began.
+    /// When the "Up next" card appeared and its countdown began.
     up_next_since: Option<Instant>,
+    /// The card was cancelled: the episode plays on to its end, then back to the library.
+    up_next_cancelled: bool,
     /// A click on the picture played or paused it: when, and whether it is now paused.
     click_flash: Option<(Instant, bool)>,
     /// The volume last frame, and when it last changed (by slider, keys or anything else).
@@ -72,6 +74,7 @@ impl NowPlaying {
             subtitle: None,
             next: None,
             up_next_since: None,
+            up_next_cancelled: false,
             click_flash: None,
             last_volume: None,
             volume_changed: None,
@@ -177,19 +180,31 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
             np.watched_marked = true;
             let _ = db.set_watched(np.movie_id, true);
         }
-        // Wait for the mouse to be released so dragging to the end doesn't exit mid-drag.
-        if player.eof_reached() && np.seek_drag.is_none() && !ctx.input(|i| i.pointer.any_down()) {
-            // An episode with another after it counts down to that one instead.
-            if np.next.is_some() {
-                let since = *np.up_next_since.get_or_insert_with(Instant::now);
-                if since.elapsed() >= UP_NEXT_AFTER {
-                    actions.push(Action::PlayNextEpisode { finished: true });
-                }
-            } else {
-                actions.push(Action::StopPlayback { finished: true });
+        let at_end = player.eof_reached();
+        // An episode with another after it offers that one from the point it counts as watched
+        // (its credits, usually), counting down to it.
+        let watched_point =
+            matches!((pos, dur), (Some(p), Some(d)) if d > 0.0 && p >= d * WATCHED_FRACTION);
+        // Wait for the mouse to be released so dragging to the end doesn't act mid-drag.
+        let settled = np.seek_drag.is_none() && !ctx.input(|i| i.pointer.any_down());
+        if np.next.is_some() && !np.up_next_cancelled && (watched_point || at_end) {
+            let since = np.up_next_since.get_or_insert_with(Instant::now);
+            if player.paused() && !at_end {
+                // Paused, the countdown holds.
+                *since = Instant::now();
+            }
+            if since.elapsed() >= UP_NEXT_AFTER && settled {
+                actions.push(Action::PlayNextEpisode { finished: true });
             }
         } else {
             np.up_next_since = None;
+            if !watched_point && !at_end {
+                // Seeking back before the credits offers the next episode again later.
+                np.up_next_cancelled = false;
+            }
+            if at_end && settled {
+                actions.push(Action::StopPlayback { finished: true });
+            }
         }
     }
 
@@ -227,7 +242,10 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
                 ui.painter().image(texture, rect, uv, Color32::WHITE);
             }
-            let video = ui.interact(rect, ui.scope_id().with("video"), Sense::click());
+            // The picture, without the control bar: clicks there are for the controls.
+            let picture =
+                Rect::from_min_max(rect.min, pos2(rect.right(), rect.bottom() - BAR_HEIGHT));
+            let video = ui.interact(picture, ui.scope_id().with("video"), Sense::click());
             let video = widgets::named(video, "Video");
             // Like Netflix, a click on the picture plays or pauses. A double-click (two clicks:
             // pause, then play again) toggles fullscreen.
@@ -270,7 +288,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 settings.time_display,
             );
             if let (Some(since), Some((_, next))) = (np.up_next_since, &np.next) {
-                up_next(ui, rect, next, since, actions);
+                up_next(ui, rect, next, since, actions, &mut np.up_next_cancelled);
             }
             if !recently_active
                 && np.up_next_since.is_none()
@@ -365,7 +383,14 @@ fn click_flash(ui: &egui::Ui, center: egui::Pos2, elapsed: Duration, paused: boo
 }
 
 /// The card at the end of an episode: what's next, a countdown, and Play now / Cancel.
-fn up_next(ui: &mut egui::Ui, rect: Rect, next: &str, since: Instant, actions: &mut Vec<Action>) {
+fn up_next(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    next: &str,
+    since: Instant,
+    actions: &mut Vec<Action>,
+    cancelled: &mut bool,
+) {
     let left = UP_NEXT_AFTER.saturating_sub(since.elapsed()).as_secs_f32();
     let size = vec2(340.0, 132.0);
     let card = Rect::from_min_size(
@@ -409,7 +434,8 @@ fn up_next(ui: &mut egui::Ui, rect: Rect, next: &str, since: Instant, actions: &
                     }
                     if widgets::button(ui, widgets::ButtonKind::Secondary, None, "Cancel").clicked()
                     {
-                        actions.push(Action::StopPlayback { finished: true });
+                        // Plays on to the end of this episode, then back to the library.
+                        *cancelled = true;
                     }
                 });
             });
@@ -490,6 +516,11 @@ fn controls(
                 let time_w = 70.0;
                 let width = (ui.available_width() - time_w).max(50.0);
                 let (value, r) = line_slider(ui, width, shown, duration, "Seek");
+                if duration > 0.0
+                    && let Some(pointer) = r.hover_pos()
+                {
+                    seek_hint(ui, r.rect, pointer.x, duration);
+                }
                 // Fast keyframe seeks while the button is held, one exact seek on release (or
                 // on a click that pressed and released within one frame).
                 if r.is_pointer_button_down_on() {
@@ -666,6 +697,26 @@ fn line_slider(
         r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
     }
     (value, r)
+}
+
+/// The time under the pointer, in a small label above the seek bar.
+fn seek_hint(ui: &egui::Ui, bar: Rect, x: f32, duration: f64) {
+    let t = ((x - bar.left()) / bar.width()).clamp(0.0, 1.0);
+    let painter = ui.painter();
+    let text = painter.layout_no_wrap(
+        format_duration(f64::from(t) * duration),
+        theme::font(13.0, "semibold"),
+        media::TEXT,
+    );
+    let size = text.size() + vec2(16.0, 8.0);
+    let center_x = x.clamp(bar.left() + size.x / 2.0, bar.right() - size.x / 2.0);
+    let label = Rect::from_center_size(pos2(center_x, bar.top() - 4.0 - size.y / 2.0), size);
+    painter.rect_filled(
+        label,
+        theme::radius::BADGE,
+        Color32::from_rgba_unmultiplied(20, 20, 20, 235),
+    );
+    painter.galley(label.min + vec2(8.0, 4.0), text, media::TEXT);
 }
 
 /// A round, white icon button for the dark player bar.

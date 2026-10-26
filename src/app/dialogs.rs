@@ -161,10 +161,16 @@ fn modal<R>(
     (resp.inner, close)
 }
 
-/// Icon disc + title (+ optional subtitle) at the top of a dialog.
-fn header(ui: &mut egui::Ui, icon: &str, color: Color32, title: &str, subtitle: Option<&str>) {
+/// Icon disc + title (+ optional subtitle) at the top of a dialog. Returns the header's row.
+fn header(
+    ui: &mut egui::Ui,
+    icon: &str,
+    color: Color32,
+    title: &str,
+    subtitle: Option<&str>,
+) -> egui::Rect {
     let p = palette(ui.ctx());
-    ui.horizontal(|ui| {
+    let row = ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(44.0), egui::Sense::hover());
         ui.painter().circle_filled(
             rect.center(),
@@ -189,6 +195,7 @@ fn header(ui: &mut egui::Ui, icon: &str, color: Color32, title: &str, subtitle: 
         });
     });
     ui.add_space(4.0);
+    row.response.rect
 }
 
 /// Right-aligned button row at the bottom of a dialog.
@@ -257,7 +264,7 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
     let mut save = false;
     let mut cancel = false;
     let ((), close) = modal(ctx, "settings", 600.0, |ui| {
-        header(ui, icons::GEAR, p.accent, "Settings", None);
+        let row = header(ui, icons::GEAR, p.accent, "Settings", None);
         egui::ScrollArea::vertical().max_height(ctx.content_rect().height() - 240.0).show(ui, |ui| {
             ui.set_width(ui.available_width() - 12.0);
             settings_section(ui, icons::FOLDER_OPEN, "Watched folders");
@@ -408,12 +415,28 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
                     let _ = opener::open(&app.paths.root);
                 }
             });
-            ui.label(RichText::new(format!("DropReel {}", env!("CARGO_PKG_VERSION"))).size(12.0).color(p.text_weak));
         });
         footer(ui, |ui| {
             save = widgets::button(ui, ButtonKind::Primary, Some(icons::CHECK), "Save").clicked();
             cancel = widgets::button(ui, ButtonKind::Secondary, None, "Cancel").clicked();
         });
+        // The version, at the far right of the title (once the dialog's width is known).
+        let slot = egui::Rect::from_min_max(
+            egui::pos2(row.right(), row.top()),
+            egui::pos2(ui.min_rect().right(), row.bottom()),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(slot)
+                .layout(Layout::right_to_left(Align::Center)),
+            |ui| {
+                ui.label(
+                    RichText::new(format!("DropReel {}", env!("CARGO_PKG_VERSION")))
+                        .size(12.5)
+                        .color(p.text_weak),
+                );
+            },
+        );
     });
     if save {
         let mut settings = (**draft).clone();

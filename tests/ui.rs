@@ -121,6 +121,38 @@ fn click_containing(app: &mut App, part: &str) {
     click_matching(app, part, |t| t.contains(part));
 }
 
+/// Presses on `label`, holds the button for a few frames, then lets go, like a person does (a
+/// plain `click` presses and releases within one frame).
+fn slow_click(app: &mut App, label: &str) {
+    let at = settle_on(app, label, |t| t == label).rect().center();
+    app.event(egui::Event::PointerMoved(at));
+    for pressed in [true, false] {
+        app.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        for _ in 0..3 {
+            app.step();
+        }
+    }
+}
+
+/// Clicks a spot that has no widget of its own.
+fn click_at(app: &mut App, at: egui::Pos2) {
+    app.event(egui::Event::PointerMoved(at));
+    for pressed in [true, false] {
+        app.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    app.step();
+}
+
 /// Opens a movie's details from its right-click menu (the middle of a poster plays it).
 fn open_details(app: &mut App, title: &str) {
     // The play button is small enough to be fully on screen even in a tiny window.
@@ -621,15 +653,7 @@ fn clicking_a_poster_plays_and_back_saves_the_position() {
         .rect()
         .left_top()
         + egui::vec2(20.0, 20.0);
-    app.event(egui::Event::PointerMoved(corner));
-    for pressed in [true, false] {
-        app.event(egui::Event::PointerButton {
-            pos: corner,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        });
-    }
+    click_at(&mut app, corner);
     until(&mut app, "the details", |a| has(a, "Remove from library"));
     assert!(!in_player(&app));
     click(&mut app, "Play movie: Long Take");
@@ -784,6 +808,12 @@ fn clicking_the_picture_pauses_and_plays() {
     run_for(&mut app, Duration::from_millis(600));
     click(&mut app, "Video");
     until(&mut app, "playing again", |a| has(a, "Pause"));
+    // The control bar is not the picture: a click on its empty middle changes nothing.
+    run_for(&mut app, Duration::from_millis(600));
+    let bar = app.ctx.content_rect().center_bottom() - egui::vec2(0.0, 30.0);
+    click_at(&mut app, bar);
+    run_for(&mut app, Duration::from_millis(300));
+    assert!(has(&app, "Pause"), "still playing");
 }
 
 #[test]
@@ -831,7 +861,7 @@ fn shows_group_their_episodes_and_play_them_in_order() {
     // At the end, the next episode is offered rather than going back to the library.
     until(&mut app, "the Up next card", |a| has(a, "Play now"));
     assert!(in_player(&app));
-    click(&mut app, "Play now");
+    slow_click(&mut app, "Play now");
     let episode = |n: u32| {
         db(root.path())
             .all_movies()
@@ -840,9 +870,9 @@ fn shows_group_their_episodes_and_play_them_in_order() {
             .find(|m| m.episode == Some(n))
             .unwrap()
     };
-    until(&mut app, "the second episode", |a| {
-        in_player(a) && episode(2).last_played.is_some()
-    });
+    // Right away, not after the countdown.
+    run_for(&mut app, Duration::from_secs(2));
+    assert!(in_player(&app) && episode(2).last_played.is_some());
     assert!(episode(1).watched);
     // The last episode ends like a movie.
     until(&mut app, "the end of the show", |a| !in_player(a));
