@@ -408,6 +408,7 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
                     let _ = opener::open(&app.paths.root);
                 }
             });
+            ui.label(RichText::new(format!("DropReel {}", env!("CARGO_PKG_VERSION"))).size(12.0).color(p.text_weak));
         });
         footer(ui, |ui| {
             save = widgets::button(ui, ButtonKind::Primary, Some(icons::CHECK), "Save").clicked();

@@ -443,6 +443,11 @@ fn settings_are_saved_to_disk() {
     // Cancel throws changes away.
     click(&mut app, "Settings");
     until(&mut app, "the settings dialog", |a| has(a, "Smooth motion"));
+    // The version is at the bottom.
+    assert!(has(
+        &app,
+        &format!("DropReel {}", env!("CARGO_PKG_VERSION"))
+    ));
     // On screen, but below the dialog's scrolled-into-view part: bring it into view first.
     find(&app, |t| t == "High-quality video scaling")
         .unwrap()
@@ -762,6 +767,23 @@ fn time_left_display_counts_down() {
     until(&mut app, "10 s less to go", |a| {
         shown_time(a).is_some_and(|p| p + 9 <= left && p + 11 >= left)
     });
+}
+
+#[test]
+fn clicking_the_picture_pauses_and_plays() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.long, &root.path().join("movies"), None);
+    let mut app = launch(root.path(), vec![]);
+    drop_files(&mut app, &[file]);
+    click(&mut app, "Play movie: Long Take");
+    until(&mut app, "playing", |a| in_player(a) && has(a, "Pause"));
+    click(&mut app, "Video");
+    until(&mut app, "paused", |a| has(a, "Play"));
+    // Far enough apart not to count as a double-click (which is fullscreen).
+    run_for(&mut app, Duration::from_millis(600));
+    click(&mut app, "Video");
+    until(&mut app, "playing again", |a| has(a, "Pause"));
 }
 
 #[test]
