@@ -979,16 +979,15 @@ fn card(
     let id = movie.id;
     let missing = lib.missing.contains(&id);
     let poster_base = Rect::from_min_size(rect.min, vec2(width, width * 1.5));
-    let info_rect = Rect::from_center_size(
-        poster_base.right_top() + vec2(-20.0, 20.0),
-        Vec2::splat(30.0),
-    );
     let resp = widgets::named(resp, &movie.title);
-    let info = ui
-        .interact(info_rect, resp.id.with("info"), Sense::click())
-        .on_hover_text("Details");
-    let info = widgets::named(info, &format!("Details: {}", movie.title));
-    let hovered = resp.hovered() || info.hovered();
+    // Like a show's card: the poster opens the details, its middle is a play button.
+    let playable = !missing && encode.is_none();
+    let play = playable.then(|| {
+        let play_rect = Rect::from_center_size(poster_base.center(), Vec2::splat(52.0));
+        let play = ui.interact(play_rect, resp.id.with("play"), Sense::click());
+        widgets::named(play, &format!("Play movie: {}", movie.title))
+    });
+    let hovered = resp.hovered() || play.as_ref().is_some_and(|p| p.hovered());
     let t = ui
         .ctx()
         .animate_bool_with_time(resp.id.with("hover"), hovered, 0.16);
@@ -1046,23 +1045,9 @@ fn card(
             },
             media::SCRIM_STRONG.gamma_multiply(t),
         );
-        if !missing {
+        if playable {
             widgets::play_disc(painter, poster.center(), 22.0 + 2.0 * t, t);
         }
-        let info_center = poster.right_top() + vec2(-20.0, 20.0);
-        painter.circle_filled(info_center, 15.0, media::BUTTON.gamma_multiply(t));
-        painter.circle_stroke(
-            info_center,
-            15.0,
-            Stroke::new(1.5, media::BUTTON_RIM.gamma_multiply(t)),
-        );
-        widgets::icon_centered(
-            painter,
-            info_center,
-            icons::INFO,
-            theme::icon_font(18.0),
-            media::TEXT.gamma_multiply(t),
-        );
     }
     // After the hover shading, so the title stays bright.
     if title_on_art {
@@ -1193,19 +1178,19 @@ fn card(
         p.text_weak,
     );
 
-    if info.clicked() {
-        actions.push(Action::ShowDetails(id));
+    if play.as_ref().is_some_and(|p| p.clicked()) {
+        actions.push(Action::Play(id));
     } else if resp.clicked() {
-        actions.push(if missing || encode.is_some() {
-            Action::ShowDetails(id)
-        } else {
-            Action::Play(id)
-        });
+        actions.push(Action::ShowDetails(id));
     }
     if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    resp.context_menu(|ui| movie_menu(ui, movie, missing, movie.size > threshold, actions));
+    let large = movie.size > threshold;
+    resp.context_menu(|ui| movie_menu(ui, movie, missing, large, actions));
+    if let Some(play) = &play {
+        play.context_menu(|ui| movie_menu(ui, movie, missing, large, actions));
+    }
 }
 
 /// The selected card's outline, or a faint one while hovered.

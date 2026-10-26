@@ -882,6 +882,7 @@ name = "dropreel"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "blake3",
  "chrono",
  "crossbeam-channel",

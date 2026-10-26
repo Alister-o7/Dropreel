@@ -17,8 +17,8 @@ there. Files larger than 5 GB get a one-click re-encode to HEVC that brings them
   fingerprint. Watched folders import new movies automatically.
 - **Shows** — files named like episodes (`Show.Name.S01E02.mkv`, `Show Name - 1x02 - Title.mkv`,
   or `S01E02.mkv` inside a `Show Name/Season 1` folder) become one show with seasons and
-  episodes. Its card opens the episode list; **Play** picks up the episode you're on, or the
-  next one. At the end of an episode an *Up next* card plays the next one after a few seconds,
+  episodes. Its poster opens the episode list; its ▶ button picks up the episode you're on, or
+  the next one. At the end of an episode an *Up next* card plays the next one after a few seconds,
   and `N` skips ahead. With a TMDb key, shows get their poster, plot and episode titles.
 - **Built-in player** (libmpv) — the video fills the window and the controls float over it,
   fading once the mouse rests (after 2.5 s by default, adjustable, paused or not). The time
@@ -78,9 +78,8 @@ You can also point DropReel at your own `ffmpeg`/`ffprobe` in **Settings**, or h
 | Action | How |
 |---|---|
 | Add movies | Drag files/folders onto the window, or **Add movies** / **Add folder** |
-| Play | Click a poster (or double-click a row in list view) |
-| A show's episodes | Click its poster away from the play button, or right-click → *Episodes* |
-| Details, tags, re-encode | Hover a poster → ⓘ, or right-click it |
+| Play | The ▶ button in the middle of a poster (or double-click a row in list view) |
+| Details, tags, re-encode · a show's episodes | Click a poster, or right-click it |
 | Rename or delete a tag | Right-click it in the sidebar, or *Settings → Tags* |
 | Play/pause · seek ±10 s · volume · mute | `Space` · `←` `→` · `↑` `↓` · `M` |
 | Next episode | `N`, or the ⏭ button |
