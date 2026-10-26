@@ -18,8 +18,8 @@ there. Files larger than 5 GB get a one-click re-encode to HEVC that brings them
 - **Shows** — files named like episodes (`Show.Name.S01E02.mkv`, `Show Name - 1x02 - Title.mkv`,
   or `S01E02.mkv` inside a `Show Name/Season 1` folder) become one show with seasons and
   episodes. Its poster opens the episode list; its ▶ button picks up the episode you're on, or
-  the next one. From the point an episode counts as watched (its credits, usually), an *Up next*
-  card plays the next one after a few seconds, and `N` skips ahead. With a TMDb key, shows get
+  the next one. In an episode's last minute an *Up next* card plays the next one after a few
+  seconds, and `N` skips ahead. With a TMDb key, shows get
   their poster, plot and episode titles.
 - **Built-in player** (libmpv) — the video fills the window and the controls float over it,
   fading once the mouse rests (after 2.5 s by default, adjustable, paused or not). The time
