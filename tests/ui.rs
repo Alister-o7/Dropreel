@@ -801,7 +801,10 @@ fn clicking_the_picture_pauses_and_plays() {
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, &[file]);
     click(&mut app, "Play movie: Long Take");
-    until(&mut app, "playing", |a| in_player(a) && has(a, "Pause"));
+    // Clicks on the picture count once the file has opened and is playing.
+    until(&mut app, "playback under way", |a| {
+        in_player(a) && has(a, "Pause") && shown_position(a).is_some_and(|p| p >= 1)
+    });
     click(&mut app, "Video");
     until(&mut app, "paused", |a| has(a, "Play"));
     // Far enough apart not to count as a double-click (which is fullscreen).
