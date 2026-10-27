@@ -242,6 +242,8 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
             ];
             if let Some(gl) = frame.gl().cloned()
                 && let Some(texture) = player.render(&gl, frame, size)
+                // Until the new file's first frame, the texture still shows the last one.
+                && player.has_picture()
             {
                 let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
                 ui.painter().image(texture, rect, uv, Color32::WHITE);
@@ -268,7 +270,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                     np.click_flash = None;
                 }
             }
-            if !np.loaded {
+            if !np.loaded || (frame.gl().is_some() && !player.has_picture()) {
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,

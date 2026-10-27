@@ -892,7 +892,9 @@ impl DropReelApp {
         let Some((next, _)) = self.now_playing.as_ref().and_then(|np| np.next.clone()) else {
             return;
         };
-        self.end_playback(finished);
+        // The next file replaces this one in mpv directly: no stop in between, which would tear
+        // down and rebuild the decoder and video output.
+        self.end_playback(finished, false);
         let resume = self
             .lib
             .get(next)
@@ -912,13 +914,13 @@ impl DropReelApp {
             self.toasts
                 .add(ToastKind::Success, format!("Finished \"{name}\"."));
         }
-        self.end_playback(finished);
+        self.end_playback(finished, true);
         self.screen_fade = Some(Instant::now());
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
     }
 
-    /// Saves where playback got to and unloads the file.
-    fn end_playback(&mut self, finished: bool) {
+    /// Saves where playback got to and, with `unload`, stops mpv.
+    fn end_playback(&mut self, finished: bool, unload: bool) {
         if let (Some(np), Ok(player)) = (&self.now_playing, &self.player) {
             tracing::info!(
                 "stopped \"{}\" at {:?} (finished: {finished})",
@@ -928,7 +930,7 @@ impl DropReelApp {
             tracing::info!("playback stats: {}", player.diagnostics());
         }
         self.save_playback_position(finished);
-        if let Ok(player) = self.player.as_mut() {
+        if unload && let Ok(player) = self.player.as_mut() {
             player.stop();
         }
         self.now_playing = None;
