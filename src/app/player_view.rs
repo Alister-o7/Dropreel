@@ -31,6 +31,10 @@ const CLICK_FLASH: Duration = Duration::from_millis(600);
 /// How long the volume level stays up after the volume last changed.
 const VOLUME_LEVEL_FOR: Duration = Duration::from_millis(1500);
 
+/// How long before the end of an episode the "Up next" card appears, in seconds (at most a tenth
+/// of the episode).
+const UP_NEXT_BEFORE_END: f64 = 60.0;
+
 /// How long the "Up next" card counts down before the next episode starts.
 pub const UP_NEXT_AFTER: Duration = Duration::from_secs(8);
 
@@ -181,13 +185,13 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
             let _ = db.set_watched(np.movie_id, true);
         }
         let at_end = player.eof_reached();
-        // An episode with another after it offers that one from the point it counts as watched
-        // (its credits, usually), counting down to it.
-        let watched_point =
-            matches!((pos, dur), (Some(p), Some(d)) if d > 0.0 && p >= d * WATCHED_FRACTION);
+        // An episode with another after it offers that one in its last minute (the last tenth
+        // of a short one), counting down.
+        let last_minute = matches!((pos, dur), (Some(p), Some(d))
+            if d > 0.0 && d - p <= UP_NEXT_BEFORE_END.min(d * 0.1));
         // Wait for the mouse to be released so dragging to the end doesn't act mid-drag.
         let settled = np.seek_drag.is_none() && !ctx.input(|i| i.pointer.any_down());
-        if np.next.is_some() && !np.up_next_cancelled && (watched_point || at_end) {
+        if np.next.is_some() && !np.up_next_cancelled && (last_minute || at_end) {
             let since = np.up_next_since.get_or_insert_with(Instant::now);
             if player.paused() && !at_end {
                 // Paused, the countdown holds.
@@ -198,8 +202,8 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
             }
         } else {
             np.up_next_since = None;
-            if !watched_point && !at_end {
-                // Seeking back before the credits offers the next episode again later.
+            if !last_minute && !at_end {
+                // Seeking back before the last minute offers the next episode again later.
                 np.up_next_cancelled = false;
             }
             if at_end && settled {
@@ -274,19 +278,22 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 );
             }
 
-            controls(
-                ui,
-                rect,
-                player,
-                np,
-                actions,
-                pos,
-                dur,
-                paused,
-                fullscreen,
-                controls_opacity,
-                settings.time_display,
-            );
+            // In a scope of their own: the controls fade, the Up next card must not.
+            ui.scope(|ui| {
+                controls(
+                    ui,
+                    rect,
+                    player,
+                    np,
+                    actions,
+                    pos,
+                    dur,
+                    paused,
+                    fullscreen,
+                    controls_opacity,
+                    settings.time_display,
+                );
+            });
             if let (Some(since), Some((_, next))) = (np.up_next_since, &np.next) {
                 up_next(ui, rect, next, since, actions, &mut np.up_next_cancelled);
             }
