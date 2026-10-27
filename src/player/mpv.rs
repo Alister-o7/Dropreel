@@ -235,6 +235,9 @@ pub struct Player {
     state: PlaybackState,
     /// Whether the current file has loaded, so mpv accepts seeks.
     loaded: bool,
+    /// Whether a frame of the current file has been rendered: until then the render target
+    /// still holds the previous file's last frame.
+    has_picture: bool,
     pending_seek: Option<PendingSeek>,
     display_fps: Option<f64>,
     stats: RenderStats,
@@ -351,6 +354,7 @@ impl Player {
             default_scaling: Vec::new(),
             state: PlaybackState::default(),
             loaded: false,
+            has_picture: false,
             pending_seek: None,
             display_fps: None,
             stats: RenderStats::default(),
@@ -598,6 +602,7 @@ impl Player {
         self.state.duration = None;
         self.state.eof = false;
         self.loaded = false;
+        self.has_picture = false;
         self.pending_seek = None;
         self.stats = RenderStats::default();
         self.command(&["loadfile", &path.to_string_lossy(), "replace"])
@@ -605,6 +610,7 @@ impl Player {
 
     pub fn stop(&mut self) {
         self.loaded = false;
+        self.has_picture = false;
         self.pending_seek = None;
         let _ = self.command(&["stop"]);
     }
@@ -627,6 +633,11 @@ impl Player {
 
     pub fn duration(&self) -> Option<f64> {
         self.state.duration.filter(|d| *d > 0.0)
+    }
+
+    /// Whether [`render`](Self::render) has drawn a frame of the current file yet.
+    pub fn has_picture(&self) -> bool {
+        self.has_picture
     }
 
     pub fn eof_reached(&self) -> bool {
@@ -822,6 +833,7 @@ impl Player {
                 let started = Instant::now();
                 (self.lib.render_context_render)(self.render, params.as_mut_ptr());
                 self.stats.rendered(started.elapsed());
+                self.has_picture |= self.loaded;
                 gl.bind_framebuffer(
                     glow::FRAMEBUFFER,
                     NonZeroU32::new(previous as u32).map(glow::NativeFramebuffer),
