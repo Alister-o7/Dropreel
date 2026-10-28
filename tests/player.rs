@@ -383,6 +383,23 @@ fn eof_from_the_previous_file_does_not_leak_into_the_next() {
 }
 
 #[test]
+fn a_new_file_counts_as_started_only_once_its_playback_begins() {
+    let Some(fx) = setup() else { return };
+    let mut s = Session::new();
+    s.play(&fx.mkv, Some(2.0));
+    s.wait("playback to start", LOAD_TIMEOUT, |s| s.player.started());
+    // Straight on to another file, with no stop in between (as for the next episode): until
+    // it starts, frames may still be the old file's.
+    s.player.load(&fx.long, None).unwrap();
+    assert!(!s.player.started());
+    assert!(!s.player.has_picture());
+    s.wait("the new file to start", LOAD_TIMEOUT, |s| {
+        s.player.started()
+    });
+    assert!((s.player.duration().unwrap() - 90.0).abs() < 1.0);
+}
+
+#[test]
 fn smooth_motion_and_diagnostics_work_without_a_display() {
     let Some(fx) = setup() else { return };
     let mut s = Session::new();

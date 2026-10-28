@@ -235,8 +235,12 @@ pub struct Player {
     state: PlaybackState,
     /// Whether the current file has loaded, so mpv accepts seeks.
     loaded: bool,
+    /// Whether playback of the current file has started (mpv's PLAYBACK_RESTART after the load):
+    /// from then on, frames are the new file's.
+    started: bool,
     /// Whether a frame of the current file has been rendered: until then the render target
-    /// still holds the previous file's last frame.
+    /// (and mpv's video output, which a new file doesn't clear) still holds the previous file's
+    /// last frame.
     has_picture: bool,
     pending_seek: Option<PendingSeek>,
     display_fps: Option<f64>,
@@ -354,6 +358,7 @@ impl Player {
             default_scaling: Vec::new(),
             state: PlaybackState::default(),
             loaded: false,
+            started: false,
             has_picture: false,
             pending_seek: None,
             display_fps: None,
@@ -602,6 +607,7 @@ impl Player {
         self.state.duration = None;
         self.state.eof = false;
         self.loaded = false;
+        self.started = false;
         self.has_picture = false;
         self.pending_seek = None;
         self.stats = RenderStats::default();
@@ -610,6 +616,7 @@ impl Player {
 
     pub fn stop(&mut self) {
         self.loaded = false;
+        self.started = false;
         self.has_picture = false;
         self.pending_seek = None;
         let _ = self.command(&["stop"]);
@@ -638,6 +645,11 @@ impl Player {
     /// Whether [`render`](Self::render) has drawn a frame of the current file yet.
     pub fn has_picture(&self) -> bool {
         self.has_picture
+    }
+
+    /// Whether playback of the current file has started (its first frame is on its way).
+    pub fn started(&self) -> bool {
+        self.started
     }
 
     pub fn eof_reached(&self) -> bool {
@@ -754,6 +766,8 @@ impl Player {
                     }
                     events.push(PlayerEvent::FileLoaded);
                 }
+                // After a load (or a seek): from here on, frames belong to the current file.
+                ffi::MPV_EVENT_PLAYBACK_RESTART if self.loaded => self.started = true,
                 ffi::MPV_EVENT_END_FILE if !ev.data.is_null() => {
                     let end = unsafe { &*(ev.data as *const ffi::mpv_event_end_file) };
                     if end.reason == ffi::MPV_END_FILE_REASON_ERROR {
@@ -833,7 +847,9 @@ impl Player {
                 let started = Instant::now();
                 (self.lib.render_context_render)(self.render, params.as_mut_ptr());
                 self.stats.rendered(started.elapsed());
-                self.has_picture |= self.loaded;
+                // Only once the new file's playback has started: a redraw between "loaded" and
+                // the first new frame still shows the previous file's last frame.
+                self.has_picture |= self.started;
                 gl.bind_framebuffer(
                     glow::FRAMEBUFFER,
                     NonZeroU32::new(previous as u32).map(glow::NativeFramebuffer),
