@@ -40,6 +40,8 @@ $deps = Join-Path $PSScriptRoot 'deps'
 $dist = Join-Path $root 'dist'
 $version = (Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"' |
     Select-Object -First 1).Matches[0].Groups[1].Value
+# A fourth version number is Cargo build metadata ("0.3.5+1"); files and the installer say "0.3.5.1".
+$version = $version -replace '\+', '.'
 
 function Invoke-GitHubApi([string]$Url) {
     $headers = @{ 'User-Agent' = 'dropreel-packaging'; 'Accept' = 'application/vnd.github+json' }

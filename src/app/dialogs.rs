@@ -431,7 +431,7 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
                 .layout(Layout::right_to_left(Align::Center)),
             |ui| {
                 ui.label(
-                    RichText::new(format!("DropReel {}", env!("CARGO_PKG_VERSION")))
+                    RichText::new(format!("DropReel {}", crate::util::app_version()))
                         .size(12.5)
                         .color(p.text_weak),
                 );

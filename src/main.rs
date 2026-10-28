@@ -74,7 +74,7 @@ fn main() -> ExitCode {
     let _log_guard = init_logging(&paths);
     tracing::info!(
         "DropReel {} starting, data in {}",
-        env!("CARGO_PKG_VERSION"),
+        dropreel::util::app_version(),
         paths.root.display()
     );
 

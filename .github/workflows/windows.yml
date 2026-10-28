@@ -101,6 +101,8 @@ jobs:
         shell: bash
         run: |
           version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          # A fourth version number is Cargo build metadata ("0.3.5+1"), released as v0.3.5.1.
+          version=${version//+/.}
           tag="v$version"
           # A pushed tag must match Cargo.toml; a manual run creates the tag itself.
           if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then

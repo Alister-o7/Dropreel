@@ -478,7 +478,7 @@ fn settings_are_saved_to_disk() {
     // The version is at the bottom.
     assert!(has(
         &app,
-        &format!("DropReel {}", env!("CARGO_PKG_VERSION"))
+        &format!("DropReel {}", env!("CARGO_PKG_VERSION").replace('+', "."))
     ));
     // On screen, but below the dialog's scrolled-into-view part: bring it into view first.
     find(&app, |t| t == "High-quality video scaling")

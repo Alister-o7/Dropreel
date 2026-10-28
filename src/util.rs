@@ -6,6 +6,16 @@ use std::path::Path;
 pub const GB: u64 = 1_000_000_000;
 
 /// Formats a byte count as e.g. "7.82 GB" or "640 MB".
+/// The app's version as people see it. Cargo's versions have three numbers, so a fourth goes in
+/// as build metadata ("0.3.5+1") and is shown as "0.3.5.1".
+pub fn app_version() -> String {
+    display_version(env!("CARGO_PKG_VERSION"))
+}
+
+fn display_version(version: &str) -> String {
+    version.replace('+', ".")
+}
+
 pub fn format_bytes(bytes: u64) -> String {
     let b = bytes as f64;
     if bytes >= GB {
@@ -83,6 +93,12 @@ pub fn file_uri(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_fourth_version_number_is_shown_with_a_dot() {
+        assert_eq!(super::display_version("0.3.5+1"), "0.3.5.1");
+        assert_eq!(super::display_version("0.3.6"), "0.3.6");
+    }
+
     use super::*;
 
     #[test]
