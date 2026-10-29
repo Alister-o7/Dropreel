@@ -1,6 +1,6 @@
 # Third-party components
 
-DropReel's own source code is under the MIT License (see `LICENSE`). The Windows packages
+Dropreel's own source code is under the MIT License (see `LICENSE`). The Windows packages
 bundle the components below, each under its own license.
 
 ## mpv — `libmpv-2.dll`
@@ -11,10 +11,10 @@ bundle the components below, each under its own license.
 - License: mpv is GPLv2-or-later; it can be built as LGPLv2.1-or-later, but these builds
   include GPL components, so treat the DLL as **GPLv2+**.
 
-DropReel loads `libmpv-2.dll` at run time. When you distribute a package that contains it,
-the GPL applies to that package as a whole. DropReel's MIT license is GPL-compatible, and its
+Dropreel loads `libmpv-2.dll` at run time. When you distribute a package that contains it,
+the GPL applies to that package as a whole. Dropreel's MIT license is GPL-compatible, and its
 complete source is available at https://github.com/alister-o7/dropreel, which satisfies the
-source requirement for DropReel. Sources for mpv and its dependencies are at the links above.
+source requirement for Dropreel. Sources for mpv and its dependencies are at the links above.
 
 ## FFmpeg — `ffmpeg.exe`, `ffprobe.exe` and the `av*.dll`/`sw*.dll` libraries
 
@@ -24,8 +24,8 @@ source requirement for DropReel. Sources for mpv and its dependencies are at the
   `licenses/ffmpeg.source.txt`)
 - License: **GPL** (the build's license text is included as `licenses/ffmpeg-LICENSE.txt`).
 
-DropReel runs `ffmpeg.exe` and `ffprobe.exe` as separate programs; they are not linked into
-DropReel.
+Dropreel runs `ffmpeg.exe` and `ffprobe.exe` as separate programs; they are not linked into
+Dropreel.
 
 ## Inter (font)
 
@@ -38,14 +38,14 @@ DropReel.
 - © Phosphor Icons — https://phosphoricons.com
 - License: MIT (`licenses/LICENSE-Phosphor.txt`)
 
-## DropReel logo and artwork
+## Dropreel logo and artwork
 
 - The app icon (`assets/icon*`), the logo mark (`assets/logo-mark.png`) and the illustrations in
-  `assets/art/` were generated for DropReel with FLUX 3 (Black Forest Labs) via fal.ai.
+  `assets/art/` were generated for Dropreel with FLUX 3 (Black Forest Labs) via fal.ai.
 
 ## Rust crates
 
-DropReel is built from many open-source crates (egui/eframe, rusqlite with a bundled SQLite,
+Dropreel is built from many open-source crates (egui/eframe, rusqlite with a bundled SQLite,
 reqwest, notify, rayon and others), almost all under MIT and/or Apache-2.0. The packaging
 script writes the full list with licenses to `licenses/rust-crates.txt`; `Cargo.lock` pins the
 exact versions.

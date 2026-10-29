@@ -42,7 +42,7 @@ fn fatal(message: &str) {
     tracing::error!("{message}");
     rfd::MessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
-        .set_title("DropReel")
+        .set_title("Dropreel")
         .set_description(message)
         .show();
 }
@@ -66,14 +66,14 @@ fn main() -> ExitCode {
         Ok(p) => p,
         Err(e) => {
             fatal(&format!(
-                "DropReel could not create its data folder:\n{e:#}"
+                "Dropreel could not create its data folder:\n{e:#}"
             ));
             return ExitCode::FAILURE;
         }
     };
     let _log_guard = init_logging(&paths);
     tracing::info!(
-        "DropReel {} starting, data in {}",
+        "Dropreel {} starting, data in {}",
         dropreel::util::app_version(),
         paths.root.display()
     );
@@ -81,8 +81,8 @@ fn main() -> ExitCode {
     let open_paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("DropReel")
-            .with_app_id("DropReel")
+            .with_title("Dropreel")
+            .with_app_id("Dropreel")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([720.0, 480.0])
             .with_drag_and_drop(true)
@@ -90,12 +90,12 @@ fn main() -> ExitCode {
         ..Default::default()
     };
     let result = eframe::run_native(
-        "DropReel",
+        "Dropreel",
         options,
         Box::new(move |cc| match DropReelApp::new(cc, paths, open_paths) {
             Ok(app) => Ok(Box::new(app)),
             Err(e) => {
-                let message = format!("DropReel could not start:\n{e:#}");
+                let message = format!("Dropreel could not start:\n{e:#}");
                 fatal(&message);
                 Err(message.into())
             }

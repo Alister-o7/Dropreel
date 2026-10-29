@@ -289,7 +289,7 @@ fn moved_files_are_found_again_and_keep_their_history() {
     let tag = db.create_tag("Favourites").unwrap();
     db.set_movie_tag(id, tag, true).unwrap();
 
-    // The user moves (and renames) the file outside DropReel.
+    // The user moves (and renames) the file outside Dropreel.
     let new_dir = root.path().join("new");
     std::fs::create_dir_all(&new_dir).unwrap();
     let new = new_dir.join("renamed.mkv");

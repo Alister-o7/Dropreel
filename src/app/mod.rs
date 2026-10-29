@@ -1,4 +1,4 @@
-//! The DropReel window.
+//! The Dropreel window.
 
 mod detail;
 mod dialogs;
@@ -172,7 +172,7 @@ pub struct DropReelApp {
     encode_badges: HashMap<MovieId, EncodeBadge>,
     quit_prompt: bool,
     allow_close: bool,
-    /// A file opened with "Open with → DropReel": play it once it's in the library.
+    /// A file opened with "Open with → Dropreel": play it once it's in the library.
     play_after_import: Option<PathBuf>,
     /// Files a background scan failed to import that the user has already been told about.
     reported_failures: HashSet<PathBuf>,
@@ -183,7 +183,7 @@ pub struct DropReelApp {
 }
 
 impl DropReelApp {
-    /// `open_paths` are files passed on the command line ("Open with DropReel").
+    /// `open_paths` are files passed on the command line ("Open with Dropreel").
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         paths: AppPaths,
@@ -299,14 +299,14 @@ impl DropReelApp {
         app.warn_about_missing_tools();
         app.restart_watcher();
         jobs::upgrade_posters(app.env(), app.events.clone());
-        // Pick up files added to watched folders while DropReel was closed, and find moved files.
+        // Pick up files added to watched folders while Dropreel was closed, and find moved files.
         if !app.settings.watched_folders.is_empty() {
             app.start_import(app.settings.watched_folders.clone(), false);
         }
         if let [single] = open_paths.as_slice()
             && scan::is_video_file(single)
         {
-            // "Open with DropReel" on one movie: play it (importing it first if needed).
+            // "Open with Dropreel" on one movie: play it (importing it first if needed).
             let path = scan::normalize(single);
             match app.find_movie_for_file(&path) {
                 Some(id) => app.actions.push(Action::Play(id)),
@@ -358,7 +358,7 @@ impl DropReelApp {
             self.toasts.add(
                 ToastKind::Error,
                 format!(
-                    "{} not found — thumbnails and technical details are unavailable. Put the tools next to DropReel.exe or set their paths in Settings.",
+                    "{} not found — thumbnails and technical details are unavailable. Put the tools next to Dropreel.exe or set their paths in Settings.",
                     missing.join(" and ")
                 ),
             );

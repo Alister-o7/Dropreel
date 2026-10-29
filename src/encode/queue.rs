@@ -506,7 +506,7 @@ fn run_job(
     let output = output_path(&job.source);
     let part = part_path(&output);
     let stats_dir = std::env::temp_dir();
-    // Unique per job, so two encodes (or two DropReel instances) never share x265 stats.
+    // Unique per job, so two encodes (or two Dropreel instances) never share x265 stats.
     static JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
     let job_no = JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
     let stats_name = format!(

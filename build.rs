@@ -1,4 +1,4 @@
-//! Embeds the app icon and version information into DropReel.exe.
+//! Embeds the app icon and version information into Dropreel.exe.
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/icon.ico");
@@ -28,9 +28,9 @@ fn main() {
         .set_version_info(winresource::VersionInfo::FILEVERSION, numeric)
         .set_version_info(winresource::VersionInfo::PRODUCTVERSION, numeric);
     res.set_icon("assets/icon.ico")
-        .set("ProductName", "DropReel")
-        .set("FileDescription", "DropReel — movie library and player")
-        .set("CompanyName", "DropReel")
+        .set("ProductName", "Dropreel")
+        .set("FileDescription", "Dropreel — movie library and player")
+        .set("CompanyName", "Dropreel")
         .set("LegalCopyright", "MIT License — see LICENSE");
     if let Err(e) = res.compile() {
         // A missing resource compiler should not break the build; the exe just has no icon.

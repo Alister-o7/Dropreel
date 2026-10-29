@@ -1,9 +1,9 @@
-# DropReel — Build Spec
+# Dropreel — Build Spec
 
-Build **DropReel**, a Windows desktop movie library and player written in Rust.
+Build **Dropreel**, a Windows desktop movie library and player written in Rust.
 
 ## Goal
-You drag movie files (or folders) into the window and they join your library. DropReel stores each file's location on disk, so clicking a poster plays the movie in the built-in player. Any movie larger than 5 GB gets a suggestion to re-encode it to HEVC at 5 GB or less, which you can start with one click.
+You drag movie files (or folders) into the window and they join your library. Dropreel stores each file's location on disk, so clicking a poster plays the movie in the built-in player. Any movie larger than 5 GB gets a suggestion to re-encode it to HEVC at 5 GB or less, which you can start with one click.
 
 ## Platform & stack
 - **Target:** Windows 10/11 x64 only.
@@ -11,7 +11,7 @@ You drag movie files (or folders) into the window and they join your library. Dr
 - **GUI:** `eframe`/`egui` with the `glow` (OpenGL) backend.
 - **Playback:** embedded **libmpv** through the `libmpv2` crate's OpenGL render API, drawn inside the app window. Bundle `libmpv-2.dll`.
 - **Media tools:** bundled `ffprobe.exe` and `ffmpeg.exe`, used for metadata, thumbnails and encoding. The user can override their paths in Settings.
-- **Storage:** SQLite through `rusqlite` with the `bundled` feature, in `%APPDATA%\DropReel\library.db`. Posters and thumbnails are cached in `%APPDATA%\DropReel\cache\`.
+- **Storage:** SQLite through `rusqlite` with the `bundled` feature, in `%APPDATA%\Dropreel\library.db`. Posters and thumbnails are cached in `%APPDATA%\Dropreel\cache\`.
 - **Other crates:** `notify` (folder watching), `serde` + `toml` (settings), `reqwest` (TMDb), `trash` (Recycle Bin), `tracing` (logging).
 
 ## Features (v1)
@@ -53,12 +53,12 @@ You drag movie files (or folders) into the window and they join your library. Dr
 - Never offer the re-encode for files of 5 GB or less.
 
 ### 6. Settings
-Settings are stored in `%APPDATA%\DropReel\settings.toml` and cover: watched folders, TMDb API key, ffmpeg/ffprobe paths, encoder and preset override, size threshold (default 5 GB), and theme (dark/light).
+Settings are stored in `%APPDATA%\Dropreel\settings.toml` and cover: watched folders, TMDb API key, ffmpeg/ffprobe paths, encoder and preset override, size threshold (default 5 GB), and theme (dark/light).
 
 ## Non-functional
 - The UI must never block. Run probing, hashing, network requests and encoding on worker threads that report back through channels.
 - Importing 1,000 files must stay responsive. Probe them in parallel with a bounded thread pool.
-- Show clear error messages, for example when ffmpeg is missing, a file is unreadable or the network fails. Write logs to `%APPDATA%\DropReel\logs\`.
+- Show clear error messages, for example when ffmpeg is missing, a file is unreadable or the network fails. Write logs to `%APPDATA%\Dropreel\logs\`.
 - Never modify or delete a user's file without an explicit confirmation.
 
 ## Project structure (suggested)

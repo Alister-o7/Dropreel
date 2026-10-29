@@ -302,7 +302,7 @@ fn style_for(p: &Palette) -> egui::Style {
     style
 }
 
-/// egui's visuals in DropReel's colours. The player bar uses the dark ones on either theme.
+/// egui's visuals in Dropreel's colours. The player bar uses the dark ones on either theme.
 pub fn visuals(p: &Palette) -> egui::Visuals {
     let mut v = if p.dark {
         egui::Visuals::dark()

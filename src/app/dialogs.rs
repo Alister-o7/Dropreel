@@ -136,7 +136,7 @@ pub fn show(app: &mut DropReelApp, ctx: &egui::Context) {
     quit_dialog(app, ctx);
 }
 
-/// A modal with DropReel's styling. Returns (inner result, should_close).
+/// A modal with Dropreel's styling. Returns (inner result, should_close).
 fn modal<R>(
     ctx: &egui::Context,
     id: &str,
@@ -305,7 +305,7 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.label(RichText::new("With a key, new movies get posters, years and plots from").color(p.text_weak));
                 ui.hyperlink_to("themoviedb.org", "https://www.themoviedb.org/settings/api");
-                ui.label(RichText::new("— otherwise DropReel uses the file name and a frame from the movie.").color(p.text_weak));
+                ui.label(RichText::new("— otherwise Dropreel uses the file name and a frame from the movie.").color(p.text_weak));
             });
 
             settings_section(ui, icons::LIGHTNING, "Re-encoding");
@@ -431,7 +431,7 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
                 .layout(Layout::right_to_left(Align::Center)),
             |ui| {
                 ui.label(
-                    RichText::new(format!("DropReel {}", crate::util::app_version()))
+                    RichText::new(format!("Dropreel {}", crate::util::app_version()))
                         .size(12.5)
                         .color(p.text_weak),
                 );
@@ -755,7 +755,7 @@ fn remove_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
         header(ui, icons::TRASH, p.danger, "Remove from library?", None);
         ui.label(
             RichText::new(format!(
-                "\"{title}\" will be removed from DropReel. The file on disk is not deleted."
+                "\"{title}\" will be removed from Dropreel. The file on disk is not deleted."
             ))
             .color(p.text_weak),
         );
@@ -798,7 +798,7 @@ fn remove_show_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
         };
         ui.label(
             RichText::new(format!(
-                "\"{title}\" and {count} will be removed from DropReel. The files on disk are not deleted."
+                "\"{title}\" and {count} will be removed from Dropreel. The files on disk are not deleted."
             ))
             .color(p.text_weak),
         );

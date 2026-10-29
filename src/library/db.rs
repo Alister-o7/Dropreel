@@ -281,7 +281,7 @@ impl Db {
         let current = self.schema_version()?;
         if current > SCHEMA_VERSION {
             bail!(
-                "the library database was created by a newer version of DropReel (schema v{current}, this version supports v{SCHEMA_VERSION})"
+                "the library database was created by a newer version of Dropreel (schema v{current}, this version supports v{SCHEMA_VERSION})"
             );
         }
         for (version, sql) in MIGRATIONS.iter().enumerate().skip(current) {

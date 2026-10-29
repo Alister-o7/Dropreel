@@ -8,7 +8,7 @@ repository = "https://github.com/alister-o7/dropreel"
 build = "build.rs"
 
 [[bin]]
-name = "DropReel"
+name = "Dropreel"
 path = "src/main.rs"
 
 [dependencies]
