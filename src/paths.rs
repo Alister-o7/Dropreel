@@ -21,7 +21,7 @@ impl AppPaths {
             Some(dir) => PathBuf::from(dir),
             None => {
                 let config = dirs::config_dir().context("could not find the AppData folder")?;
-                // The app was "DropReel" before 0.3.6. Windows ignores case, so it's the same
+                // The app was "DropReel" before 0.3.5.3. Windows ignores case, so it's the same
                 // folder there; elsewhere an existing one is kept.
                 let old = config.join("DropReel");
                 let new = config.join("Dropreel");
