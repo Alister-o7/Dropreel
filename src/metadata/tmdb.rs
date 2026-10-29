@@ -75,7 +75,7 @@ impl TmdbClient {
     pub fn new(key: &str) -> Result<Self, String> {
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(20))
-            .user_agent(concat!("DropReel/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("Dropreel/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| e.to_string())?;
         Ok(Self {

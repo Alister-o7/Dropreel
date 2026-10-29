@@ -38,7 +38,7 @@ pub fn sidebar(app: &mut DropReelApp, ui: &mut egui::Ui) {
                 logo(ui, 32.0);
                 ui.add_space(2.0);
                 ui.label(
-                    theme::bold("DropReel")
+                    theme::bold("Dropreel")
                         .size(20.0)
                         .color(p.text)
                         .extra_letter_spacing(-0.3),

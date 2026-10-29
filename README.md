@@ -1,6 +1,6 @@
-<p align="center"><img src="assets/icon-512.png" width="112" alt="DropReel logo"></p>
+<p align="center"><img src="assets/icon-512.png" width="112" alt="Dropreel logo"></p>
 
-# DropReel
+# Dropreel
 
 [![Windows](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml/badge.svg)](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml)
 
@@ -54,8 +54,8 @@ there. Files larger than 5 GB get a one-click re-encode to HEVC that brings them
 
 Download the latest version from the
 [Releases page](https://github.com/Alister-o7/DropReel/releases/latest): either the installer
-(`DropReel-<version>-setup.exe`, per-user, no admin needed) or the portable zip. Windows 10/11,
-64-bit. Builds of every commit are also available as the **DropReel-win64** artifact on the
+(`Dropreel-<version>-setup.exe`, per-user, no admin needed) or the portable zip. Windows 10/11,
+64-bit. Builds of every commit are also available as the **Dropreel-win64** artifact on the
 [Actions page](https://github.com/Alister-o7/DropReel/actions/workflows/windows.yml).
 
 To publish a new release, bump `version` in `Cargo.toml`, add
@@ -63,18 +63,18 @@ To publish a new release, bump `version` in `Cargo.toml`, add
 workflow manually with *Publish a GitHub Release* ticked. CI builds, tests, creates the tag and
 attaches the installer, zip and checksums to a GitHub Release.
 
-Keep these files next to `DropReel.exe` (both packages include them):
+Keep these files next to `Dropreel.exe` (both packages include them):
 
 | File | What it's for | Without it |
 |---|---|---|
-| `libmpv-2.dll` | Playing movies inside DropReel | Movies open in your default player instead |
+| `libmpv-2.dll` | Playing movies inside Dropreel | Movies open in your default player instead |
 | `ffprobe.exe` | Durations, codecs, tracks | Movies are added without technical details |
 | `ffmpeg.exe` | Thumbnails and re-encoding | No frame posters, no re-encoding |
 | `av*.dll`, `sw*.dll` | FFmpeg libraries used by `ffmpeg.exe`/`ffprobe.exe` | Neither tool starts |
 
-You can also point DropReel at your own `ffmpeg`/`ffprobe` in **Settings**, or have them on `PATH`.
+You can also point Dropreel at your own `ffmpeg`/`ffprobe` in **Settings**, or have them on `PATH`.
 
-## Using DropReel
+## Using Dropreel
 
 | Action | How |
 |---|---|
@@ -87,10 +87,10 @@ You can also point DropReel at your own `ffmpeg`/`ffprobe` in **Settings**, or h
 | Fullscreen | `F` or double-click the video; `Esc` leaves fullscreen, then returns to the library |
 | Search | `Ctrl+F` |
 
-The installer also adds DropReel to Explorer's **Open with** menu for video files; opening a
+The installer also adds Dropreel to Explorer's **Open with** menu for video files; opening a
 movie that way plays it (and adds it to the library if it's new).
 
-Data lives in `%APPDATA%\DropReel`: `library.db` (SQLite), `settings.toml`, `cache\posters`
+Data lives in `%APPDATA%\Dropreel`: `library.db` (SQLite), `settings.toml`, `cache\posters`
 and `logs`.
 
 ### Troubleshooting
@@ -101,12 +101,12 @@ and `logs`.
   syncs video to your monitor's refresh rate and blends frames. Each playback writes a
   `playback stats:` line to the log (decoder, dropped/late frames, render times) — attach it to a
   bug report.
-- **mpv diagnostics** — set `DROPREEL_MPV_LOG=C:\path\mpv.log` before starting DropReel to get
+- **mpv diagnostics** — set `DROPREEL_MPV_LOG=C:\path\mpv.log` before starting Dropreel to get
   mpv's own log; `DROPREEL_MPV_OPTS="hwdec=no,scale=bilinear"` passes extra mpv options.
 - **Re-encode didn't fit under the limit** — GPU encoders aim close to the target but can
   overshoot slightly; choose *Best quality* (or *Custom* with x265) in Settings for the most
   accurate size.
-- Logs are in `%APPDATA%\DropReel\logs`. Set `DROPREEL_LOG=debug` for more detail.
+- Logs are in `%APPDATA%\Dropreel\logs`. Set `DROPREEL_LOG=debug` for more detail.
 
 ## Building from source
 
@@ -121,7 +121,7 @@ cd DropReel
 
 The script's stages can also run separately: `-Stage deps` (download the third-party binaries
 into `packaging\deps`), `-Stage build` (`cargo build --release`) and `-Stage package`
-(assemble `dist\DropReel\`, zip it, and build the installer if
+(assemble `dist\Dropreel\`, zip it, and build the installer if
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed).
 
 For development, `cargo run` works once `libmpv-2.dll`, `ffmpeg.exe` and `ffprobe.exe` are
@@ -158,14 +158,14 @@ The exact URLs used are written to `licenses\*.source.txt` in each package.
 
 ## Licenses
 
-DropReel's own code is under the [MIT License](LICENSE).
+Dropreel's own code is under the [MIT License](LICENSE).
 
 The packages bundle third-party software under its own licenses — see
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md):
 
 - **mpv** (`libmpv-2.dll`) — GPLv2+ for these builds (mpv itself can be LGPL; the shinchiro
-  builds include GPL parts). DropReel loads it at run time, so a package containing it is
-  distributed under the GPL; DropReel's MIT license is GPL-compatible and its source is this
+  builds include GPL parts). Dropreel loads it at run time, so a package containing it is
+  distributed under the GPL; Dropreel's MIT license is GPL-compatible and its source is this
   repository.
 - **FFmpeg** (`ffmpeg.exe`, `ffprobe.exe` and their DLLs) — GPL (BtbN "gpl-shared" build). Run
   as separate programs.

@@ -21,7 +21,7 @@ type App = Harness<'static, DropReelApp>;
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Starts DropReel with its data in `root`, as if launched with `open` on the command line.
+/// Starts Dropreel with its data in `root`, as if launched with `open` on the command line.
 fn launch(root: &Path, open: Vec<PathBuf>) -> App {
     launch_sized(root, open, egui::vec2(1280.0, 800.0))
 }
@@ -478,7 +478,7 @@ fn settings_are_saved_to_disk() {
     // The version is at the bottom.
     assert!(has(
         &app,
-        &format!("DropReel {}", env!("CARGO_PKG_VERSION").replace('+', "."))
+        &format!("Dropreel {}", env!("CARGO_PKG_VERSION").replace('+', "."))
     ));
     // On screen, but below the dialog's scrolled-into-view part: bring it into view first.
     find(&app, |t| t == "High-quality video scaling")
@@ -906,7 +906,7 @@ fn unplayable_file_shows_an_error_and_returns_to_the_library() {
     until(&mut app, "the import to finish", |a| {
         has_text(a, "Added 1 movie")
     });
-    // The file is replaced by junk behind DropReel's back.
+    // The file is replaced by junk behind Dropreel's back.
     std::fs::copy(&fx.garbage, &file).unwrap();
     click(&mut app, "Play movie: Another Film");
     until(&mut app, "an error", |a| has_text(a, "Could not play"));

@@ -1,6 +1,6 @@
 //! Minimal bindings to libmpv's client and render API, loaded at runtime.
 //!
-//! Loading `libmpv-2.dll` dynamically means DropReel still starts (with playback disabled and a
+//! Loading `libmpv-2.dll` dynamically means Dropreel still starts (with playback disabled and a
 //! clear message) when the DLL is missing, and builds without mpv's import library.
 
 #![allow(non_camel_case_types)]
@@ -201,7 +201,7 @@ pub fn lib() -> Result<&'static MpvLib, String> {
         }
         tracing::warn!("libmpv not found: {}", errors.join("; "));
         Err(if cfg!(windows) {
-            "libmpv-2.dll was not found. Put it next to DropReel.exe to enable the built-in player.".into()
+            "libmpv-2.dll was not found. Put it next to Dropreel.exe to enable the built-in player.".into()
         } else {
             "libmpv was not found. Install mpv's library to enable the built-in player.".into()
         })

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds DropReel and packages it with libmpv, ffmpeg and ffprobe.
+    Builds Dropreel and packages it with libmpv, ffmpeg and ffprobe.
 
 .DESCRIPTION
     Stages (default: all):
@@ -8,8 +8,8 @@
                their DLLs (BtbN/FFmpeg-Builds, GPL shared build) into packaging\deps. Skipped if
                already there.
       build    cargo build --release
-      package  Assemble dist\DropReel\, zip it to dist\DropReel-<version>-win64.zip and, if Inno
-               Setup 6 is installed, build dist\DropReel-<version>-setup.exe.
+      package  Assemble dist\Dropreel\, zip it to dist\Dropreel-<version>-win64.zip and, if Inno
+               Setup 6 is installed, build dist\Dropreel-<version>-setup.exe.
 
     Needs: Rust (rustup), and 7-Zip or a tar.exe that can read .7z (Windows 10+ includes one).
 
@@ -125,7 +125,7 @@ function Invoke-Build {
 }
 
 function Write-CrateList([string]$Path) {
-    $header = "Rust crates compiled into DropReel.exe (name, version, license).`r`n" +
+    $header = "Rust crates compiled into Dropreel.exe (name, version, license).`r`n" +
               "Their full license texts are in each crate's source on https://crates.io.`r`n"
     try {
         $json = cargo metadata --format-version 1 --locked --filter-platform x86_64-pc-windows-msvc --manifest-path (Join-Path $root 'Cargo.toml')
@@ -141,13 +141,13 @@ function Write-CrateList([string]$Path) {
 }
 
 function New-Package {
-    $exe = Join-Path $root 'target\release\DropReel.exe'
+    $exe = Join-Path $root 'target\release\Dropreel.exe'
     if (-not (Test-Path $exe)) { throw "$exe is missing. Run the build stage first." }
     foreach ($file in 'libmpv-2.dll', 'ffmpeg.exe', 'ffprobe.exe') {
         if (-not (Test-Path (Join-Path $deps $file))) { throw "$file is missing. Run the deps stage first." }
     }
 
-    $stage = Join-Path $dist 'DropReel'
+    $stage = Join-Path $dist 'Dropreel'
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
     $licenses = Join-Path $stage 'licenses'
     New-Item -ItemType Directory -Force $licenses | Out-Null
@@ -157,7 +157,7 @@ function New-Package {
     # libmpv-2.dll plus, for a shared ffmpeg build, its avcodec/avformat/... DLLs.
     Get-ChildItem $deps -Filter '*.dll' | Copy-Item -Destination $stage
 
-    Copy-Item (Join-Path $root 'LICENSE') (Join-Path $licenses 'DropReel-LICENSE.txt')
+    Copy-Item (Join-Path $root 'LICENSE') (Join-Path $licenses 'Dropreel-LICENSE.txt')
     Copy-Item (Join-Path $root 'THIRD-PARTY-NOTICES.md') $licenses
     Copy-Item (Join-Path $root 'assets\fonts\LICENSE-Inter.txt') $licenses
     Copy-Item (Join-Path $root 'assets\fonts\LICENSE-Phosphor.txt') $licenses
@@ -170,24 +170,24 @@ function New-Package {
     Write-CrateList (Join-Path $licenses 'rust-crates.txt')
 
     $readme = @"
-DropReel $version
+Dropreel $version
 =================
 
-Run DropReel.exe. Drag movie files or folders onto the window to add them.
+Run Dropreel.exe. Drag movie files or folders onto the window to add them.
 
-Keep the other files next to DropReel.exe:
+Keep the other files next to Dropreel.exe:
   - libmpv-2.dll  plays movies inside the app
   - ffmpeg.exe    makes thumbnails and re-encodes large files to HEVC
   - ffprobe.exe   reads durations, codecs and tracks
   - av*.dll, sw*.dll  FFmpeg libraries used by ffmpeg.exe and ffprobe.exe
 
-Your library and settings live in %APPDATA%\DropReel.
-Licenses for DropReel and the bundled components are in the licenses folder.
+Your library and settings live in %APPDATA%\Dropreel.
+Licenses for Dropreel and the bundled components are in the licenses folder.
 More: https://github.com/alister-o7/dropreel
 "@
     Set-Content -Path (Join-Path $stage 'README.txt') -Value $readme -Encoding utf8
 
-    $zip = Join-Path $dist "DropReel-$version-win64.zip"
+    $zip = Join-Path $dist "Dropreel-$version-win64.zip"
     if (Test-Path $zip) { Remove-Item $zip -Force }
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
     Write-Host "Created $zip"
@@ -203,7 +203,7 @@ More: https://github.com/alister-o7/dropreel
     }
     & $iscc "/DAppVersion=$version" "/DSourceDir=$stage" "/DOutputDir=$dist" (Join-Path $PSScriptRoot 'dropreel.iss')
     if ($LASTEXITCODE) { throw 'Inno Setup failed' }
-    Write-Host "Created $(Join-Path $dist "DropReel-$version-setup.exe")"
+    Write-Host "Created $(Join-Path $dist "Dropreel-$version-setup.exe")"
 }
 
 switch ($Stage) {

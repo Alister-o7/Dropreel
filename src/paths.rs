@@ -1,4 +1,4 @@
-//! Locations of DropReel's data on disk (`%APPDATA%\DropReel` on Windows).
+//! Locations of Dropreel's data on disk (`%APPDATA%\Dropreel` on Windows).
 
 use std::path::{Path, PathBuf};
 
@@ -19,9 +19,18 @@ impl AppPaths {
     pub fn resolve() -> anyhow::Result<Self> {
         let root = match std::env::var_os("DROPREEL_HOME") {
             Some(dir) => PathBuf::from(dir),
-            None => dirs::config_dir()
-                .context("could not find the AppData folder")?
-                .join("DropReel"),
+            None => {
+                let config = dirs::config_dir().context("could not find the AppData folder")?;
+                // The app was "DropReel" before 0.3.5.3. Windows ignores case, so it's the same
+                // folder there; elsewhere an existing one is kept.
+                let old = config.join("DropReel");
+                let new = config.join("Dropreel");
+                if !new.exists() && old.exists() {
+                    old
+                } else {
+                    new
+                }
+            }
         };
         Self::at(&root)
     }

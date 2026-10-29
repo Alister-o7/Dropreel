@@ -12,7 +12,7 @@ pub struct Tools {
 }
 
 impl Tools {
-    /// Looks for the tools in this order: the path set in Settings, next to `DropReel.exe`,
+    /// Looks for the tools in this order: the path set in Settings, next to `Dropreel.exe`,
     /// then on `PATH`.
     pub fn locate(settings: &Settings) -> Self {
         Self {
@@ -24,13 +24,13 @@ impl Tools {
     pub fn ffmpeg(&self) -> Result<&Path, String> {
         self.ffmpeg
             .as_deref()
-            .ok_or_else(|| "ffmpeg was not found. Put ffmpeg.exe next to DropReel.exe or set its path in Settings.".into())
+            .ok_or_else(|| "ffmpeg was not found. Put ffmpeg.exe next to Dropreel.exe or set its path in Settings.".into())
     }
 
     pub fn ffprobe(&self) -> Result<&Path, String> {
         self.ffprobe
             .as_deref()
-            .ok_or_else(|| "ffprobe was not found. Put ffprobe.exe next to DropReel.exe or set its path in Settings.".into())
+            .ok_or_else(|| "ffprobe was not found. Put ffprobe.exe next to Dropreel.exe or set its path in Settings.".into())
     }
 }
 
