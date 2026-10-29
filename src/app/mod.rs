@@ -48,10 +48,9 @@ pub enum Action {
     StopPlayback {
         finished: bool,
     },
-    /// Go on to the next episode of a show; `finished` when this one played to the end.
-    PlayNextEpisode {
-        finished: bool,
-    },
+    /// Go on to the next episode of a show (the Next episode button, N, and the Up next card's
+    /// Play now and countdown alike).
+    PlayNextEpisode,
     PlaybackFailed(String),
     ShowDetails(MovieId),
     /// Open a show's panel: its seasons and episodes.
@@ -576,7 +575,7 @@ impl DropReelApp {
             Action::Play(id) => self.play(id),
             Action::StartPlayback(id, start) => self.start_playback(id, start),
             Action::StopPlayback { finished } => self.stop_playback(finished, ctx),
-            Action::PlayNextEpisode { finished } => self.play_next_episode(finished),
+            Action::PlayNextEpisode => self.play_next_episode(),
             Action::PlaybackFailed(message) => {
                 self.toasts.add(ToastKind::Error, message);
                 self.stop_playback(false, ctx);
@@ -888,13 +887,14 @@ impl DropReelApp {
     }
 
     /// Ends this episode and starts the next, staying in the player (and in fullscreen).
-    fn play_next_episode(&mut self, finished: bool) {
+    /// This episode is saved as if stopped where it is: a resume point, or watched past 95%.
+    fn play_next_episode(&mut self) {
         let Some((next, _)) = self.now_playing.as_ref().and_then(|np| np.next.clone()) else {
             return;
         };
         // The next file replaces this one in mpv directly: no stop in between, which would tear
         // down and rebuild the decoder and video output.
-        self.end_playback(finished, false);
+        self.end_playback(false, false);
         let resume = self
             .lib
             .get(next)
