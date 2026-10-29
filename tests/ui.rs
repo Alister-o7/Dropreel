@@ -845,7 +845,7 @@ fn shows_group_their_episodes_and_play_them_in_order() {
     let root = tempfile::tempdir().unwrap();
     let tv = root.path().join("TV");
     let season = tv.join("Test Show").join("Season 1");
-    copy_into(&fx.mkv, &season, Some("Test.Show.S01E01.Pilot.mkv"));
+    copy_into(&fx.long, &season, Some("Test.Show.S01E01.Pilot.mkv"));
     copy_into(&fx.webm, &season, Some("S01E02.webm"));
     let mut app = launch(root.path(), vec![]);
     drop_files(&mut app, std::slice::from_ref(&tv));
@@ -860,8 +860,14 @@ fn shows_group_their_episodes_and_play_them_in_order() {
     });
 
     click(&mut app, "Play S01E01");
-    until(&mut app, "the player", in_player);
-    // At the end, the next episode is offered rather than going back to the library.
+    until(&mut app, "playback under way", |a| {
+        in_player(a) && shown_position(a).is_some_and(|p| p >= 1)
+    });
+    // Into the last tenth of the 90-second episode, short of the 95% that counts as watched:
+    // the next episode is offered rather than going back to the library.
+    for _ in 0..8 {
+        app.key_press(Key::ArrowRight);
+    }
     until(&mut app, "the Up next card", |a| has(a, "Play now"));
     assert!(in_player(&app));
     slow_click(&mut app, "Play now");
@@ -876,7 +882,14 @@ fn shows_group_their_episodes_and_play_them_in_order() {
     // Right away, not after the countdown.
     run_for(&mut app, Duration::from_secs(2));
     assert!(in_player(&app) && episode(2).last_played.is_some());
-    assert!(episode(1).watched);
+    // Like the Next episode button: the episode left keeps its place, not yet watched.
+    let first = episode(1);
+    assert!(!first.watched);
+    assert!(
+        first.resume_pos.is_some_and(|p| (80.0..86.0).contains(&p)),
+        "{:?}",
+        first.resume_pos
+    );
     // The last episode ends like a movie.
     until(&mut app, "the end of the show", |a| !in_player(a));
     until(&mut app, "the toast", |a| has_text(a, "Finished"));

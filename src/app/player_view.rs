@@ -198,7 +198,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 *since = Instant::now();
             }
             if since.elapsed() >= UP_NEXT_AFTER && settled {
-                actions.push(Action::PlayNextEpisode { finished: true });
+                actions.push(Action::PlayNextEpisode);
             }
         } else {
             np.up_next_since = None;
@@ -361,7 +361,7 @@ fn handle_keys(
         toggle_fullscreen(ctx);
     }
     if has_next && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::N)) {
-        actions.push(Action::PlayNextEpisode { finished: false });
+        actions.push(Action::PlayNextEpisode);
     }
     // With a track menu open, Esc just closes the menu (egui handles that).
     if !egui::Popup::is_any_open(ctx)
@@ -439,7 +439,7 @@ fn up_next(
                         "Play now",
                     );
                     if play.clicked() {
-                        actions.push(Action::PlayNextEpisode { finished: true });
+                        actions.push(Action::PlayNextEpisode);
                     }
                     if widgets::button(ui, widgets::ButtonKind::Secondary, None, "Cancel").clicked()
                     {
@@ -579,7 +579,7 @@ fn controls(
                         ui.add_space(4.0);
                         let tip = format!("Next episode (N): {next}");
                         if player_button(ui, icons::SKIP_FORWARD, 22.0, &tip).clicked() {
-                            actions.push(Action::PlayNextEpisode { finished: false });
+                            actions.push(Action::PlayNextEpisode);
                         }
                     }
 
