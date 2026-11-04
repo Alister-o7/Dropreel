@@ -470,3 +470,21 @@ fn relative_seek_works_when_paused_right_after_loading() {
     });
     assert!(s.player.paused());
 }
+
+#[test]
+fn the_next_file_plays_when_loaded_right_at_the_end_of_the_previous_one() {
+    let Some(fx) = setup() else { return };
+    let mut s = Session::new();
+    // The Up next countdown runs out with the episode at its end, paused there (keep-open).
+    // Unpausing there used to race mpv pausing again, which carried over to the next file
+    // about half the time, so try a few times.
+    for round in 0..6 {
+        s.play(&fx.mkv, Some(5.3));
+        s.wait("end of file", LOAD_TIMEOUT, |s| {
+            s.player.eof_reached() && s.player.paused()
+        });
+        s.play(&fx.long, None);
+        s.wait_past(0.5);
+        assert!(!s.player.paused(), "round {round}");
+    }
+}

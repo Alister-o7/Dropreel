@@ -602,7 +602,6 @@ impl Player {
             "start",
             &start.map_or("none".to_string(), |s| format!("{s:.3}")),
         );
-        self.set_paused(false);
         self.state.position = start;
         self.state.duration = None;
         self.state.eof = false;
@@ -611,7 +610,13 @@ impl Player {
         self.has_picture = false;
         self.pending_seek = None;
         self.stats = RenderStats::default();
-        self.command(&["loadfile", &path.to_string_lossy(), "replace"])
+        let loaded = self.command(&["loadfile", &path.to_string_lossy(), "replace"]);
+        // Unpause only once the new file is queued. At the end of a file (keep-open), mpv pauses
+        // again as soon as it's unpaused, and that pause would carry over to the new file. mpv
+        // would send no change for it either (it last told us "paused"), so the app would think
+        // the new file is playing while it sits on its first frame.
+        self.set_paused(false);
+        loaded
     }
 
     pub fn stop(&mut self) {
