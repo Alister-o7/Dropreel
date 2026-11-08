@@ -811,6 +811,36 @@ fn clicking_the_picture_pauses_and_plays() {
     run_for(&mut app, Duration::from_millis(600));
     click(&mut app, "Video");
     until(&mut app, "playing again", |a| has(a, "Pause"));
+    // A double-click is for fullscreen: it neither pauses nor plays. (The harness runs a frame
+    // per event, a quarter of a second apart, so allow a longer double-click.)
+    run_for(&mut app, Duration::from_millis(600));
+    app.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 1.0);
+    let picture = settle_on(&mut app, "Video", |t| t == "Video")
+        .rect()
+        .center();
+    app.event(egui::Event::PointerMoved(picture));
+    app.step();
+    for pressed in [true, false, true, false] {
+        app.event(egui::Event::PointerButton {
+            pos: picture,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        app.step();
+        assert!(
+            has(&app, "Pause"),
+            "the first click of a double-click paused"
+        );
+    }
+    let end = Instant::now() + Duration::from_millis(800);
+    until(&mut app, "the double-click time to pass", |a| {
+        assert!(has(a, "Pause"), "a double-click paused playback");
+        Instant::now() >= end
+    });
+    app.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 0.3);
     // The control bar is not the picture: a click on its empty middle changes nothing.
     run_for(&mut app, Duration::from_millis(600));
     let bar = app.ctx.content_rect().center_bottom() - egui::vec2(0.0, 30.0);
