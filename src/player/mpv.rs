@@ -130,6 +130,8 @@ const DIAGNOSTIC_PROPS: [&str; 17] = [
 const SLOW_CALL: Duration = Duration::from_millis(50);
 /// A file that has no picture this long after it was asked for is logged.
 const SLOW_LOAD: Duration = Duration::from_secs(3);
+/// How often mpv waiting on rendering outside a load is summed up in the log.
+const IDLE_WAITS_EVERY: Duration = Duration::from_secs(60);
 
 /// Which file mpv's file events are about. After `load`, mpv still reports on the file it is
 /// leaving, and on a file replaced before it even started (the next episode asked for twice in
@@ -357,6 +359,9 @@ pub struct Player {
     diagnostics: Vec<DiagnosticsBatch>,
     last_diagnostics: Option<String>,
     timeline: Option<LoadTimeline>,
+    /// mpv's video output waiting on rendering outside a load, since the last report.
+    idle_render_waits: u32,
+    idle_render_waits_logged: Option<Instant>,
 }
 
 unsafe extern "C" fn get_proc_address(ctx: *mut c_void, name: *const c_char) -> *mut c_void {
@@ -483,6 +488,8 @@ impl Player {
             diagnostics: Vec::new(),
             last_diagnostics: None,
             timeline: None,
+            idle_render_waits: 0,
+            idle_render_waits_logged: None,
         };
         for (name, value) in outputs {
             player.option(name, value);
@@ -991,6 +998,7 @@ impl Player {
             }
         }
         self.check_slow_load();
+        self.report_idle_render_waits();
         events
     }
 
@@ -1046,27 +1054,57 @@ impl Player {
             return;
         };
         let text = text.trim_end();
-        if text.contains("not being called or stuck")
-            && let Some(t) = self.timeline.as_mut()
-        {
-            t.render_waits += 1;
+        // The detailed messages are for telling how a file loads; outside that they would
+        // repeat with every seek, and with every frame while the window is hidden (mpv's video
+        // output then waits for renders that don't come).
+        let loading = self.timeline.as_ref().is_some_and(|t| !t.reported);
+        if text.contains("not being called") {
+            match self.timeline.as_mut().filter(|t| !t.reported) {
+                Some(t) => t.render_waits += 1,
+                None => {
+                    self.idle_render_waits += 1;
+                    return;
+                }
+            }
         }
-        if msg.log_level <= ffi::MPV_LOG_LEVEL_WARN {
+        if prefix == "overflow" {
+            // mpv dropped messages we fell behind on (e.g. while the window was hidden).
+            tracing::info!("mpv [{prefix}] {text}");
+        } else if msg.log_level <= ffi::MPV_LOG_LEVEL_WARN {
             tracing::warn!("mpv [{prefix}] {text}");
         } else if msg.log_level <= ffi::MPV_LOG_LEVEL_INFO
-            || [
-                "not being called",
-                "first video frame after restart",
-                "playback restart complete",
-                "reconfig to",
-                "Opening done",
-                "hwdec",
-            ]
-            .iter()
-            .any(|s| text.contains(s))
-            || prefix == "ao"
+            || (loading
+                && ([
+                    "not being called",
+                    "first video frame after restart",
+                    "playback restart complete",
+                    "reconfig to",
+                    "Opening done",
+                    "hwdec",
+                ]
+                .iter()
+                .any(|s| text.contains(s))
+                    || prefix == "ao"))
         {
             tracing::info!("mpv [{prefix}] {text}");
+        }
+    }
+
+    /// Logs, at most once a minute, how often mpv waited on rendering outside a load (normal
+    /// while the window is hidden; otherwise a sign of trouble).
+    fn report_idle_render_waits(&mut self) {
+        if self.idle_render_waits > 0
+            && self
+                .idle_render_waits_logged
+                .is_none_or(|t| t.elapsed() >= IDLE_WAITS_EVERY)
+        {
+            tracing::info!(
+                "mpv waited on rendering {} times since the last report (expected while the \
+                 window is hidden)",
+                self.idle_render_waits
+            );
+            self.idle_render_waits = 0;
+            self.idle_render_waits_logged = Some(Instant::now());
         }
     }
 

@@ -740,19 +740,21 @@ impl DropReelApp {
                 jobs::tmdb_apply(self.env(), self.events.clone(), id, choice)
             }
             Action::AddFiles => {
-                if let Some(files) = rfd::FileDialog::new()
-                    .set_title("Add movies")
-                    .add_filter("Video files", scan::VIDEO_EXTENSIONS)
-                    .pick_files()
-                {
+                if let Some(files) = watchdog::modal(|| {
+                    rfd::FileDialog::new()
+                        .set_title("Add movies")
+                        .add_filter("Video files", scan::VIDEO_EXTENSIONS)
+                        .pick_files()
+                }) {
                     self.start_import(files, true);
                 }
             }
             Action::AddFolder => {
-                if let Some(folder) = rfd::FileDialog::new()
-                    .set_title("Add a folder of movies")
-                    .pick_folder()
-                {
+                if let Some(folder) = watchdog::modal(|| {
+                    rfd::FileDialog::new()
+                        .set_title("Add a folder of movies")
+                        .pick_folder()
+                }) {
                     self.start_import(vec![folder], true);
                 }
             }
@@ -949,7 +951,7 @@ impl DropReelApp {
         if let Some(dir) = movie.path.parent().filter(|d| d.exists()) {
             dialog = dialog.set_directory(dir);
         }
-        let Some(file) = dialog.pick_file() else {
+        let Some(file) = watchdog::modal(|| dialog.pick_file()) else {
             return;
         };
         match import::relink_manually(&self.env(), id, &file) {

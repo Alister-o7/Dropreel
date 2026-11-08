@@ -1,8 +1,8 @@
 //! Notices when the UI thread is stuck in one frame, and says so in the log from a thread of
 //! its own: a freeze leaves a trace even if it never ends.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 /// How long one frame may take before each warning.
@@ -12,16 +12,30 @@ const WARN_AFTER: [Duration; 3] = [
     Duration::from_secs(30),
 ];
 
-struct Shared {
-    epoch: Instant,
-    /// When the frame in progress started, in ms since `epoch` plus one; 0 between frames.
-    frame_started: AtomicU64,
+/// Native dialogs (file pickers) open now: they block the UI thread on purpose.
+static MODALS: AtomicU32 = AtomicU32::new(0);
+/// When the last native dialog closed (see `now`).
+static MODAL_CLOSED: AtomicU64 = AtomicU64::new(0);
+
+/// Milliseconds since the first call, plus one (so 0 can mean "never").
+fn now() -> u64 {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
 }
 
-impl Shared {
-    fn now(&self) -> u64 {
-        self.epoch.elapsed().as_millis() as u64 + 1
-    }
+/// Runs `dialog`, a native dialog that blocks the UI thread until the user closes it, without
+/// the watchdog taking that for a freeze.
+pub fn modal<T>(dialog: impl FnOnce() -> T) -> T {
+    MODALS.fetch_add(1, Ordering::Relaxed);
+    let result = dialog();
+    MODAL_CLOSED.store(now(), Ordering::Relaxed);
+    MODALS.fetch_sub(1, Ordering::Relaxed);
+    result
+}
+
+struct Shared {
+    /// When the frame in progress started (see `now`); 0 between frames.
+    frame_started: AtomicU64,
 }
 
 pub struct Watchdog {
@@ -31,7 +45,6 @@ pub struct Watchdog {
 impl Watchdog {
     pub fn start() -> Self {
         let shared = Arc::new(Shared {
-            epoch: Instant::now(),
             frame_started: AtomicU64::new(0),
         });
         let watched = Arc::downgrade(&shared);
@@ -47,7 +60,7 @@ impl Watchdog {
                         return;
                     };
                     let started = shared.frame_started.load(Ordering::Relaxed);
-                    let now = shared.now();
+                    let now = now();
                     if let Some((frame, _)) = warned
                         && frame != started
                     {
@@ -58,10 +71,12 @@ impl Watchdog {
                         );
                         warned = None;
                     }
-                    if started == 0 {
+                    if started == 0 || MODALS.load(Ordering::Relaxed) > 0 {
                         continue;
                     }
-                    let stuck = Duration::from_millis(now.saturating_sub(started));
+                    // Time in a native dialog doesn't count.
+                    let since = started.max(MODAL_CLOSED.load(Ordering::Relaxed));
+                    let stuck = Duration::from_millis(now.saturating_sub(since));
                     let count = warned.map_or(0, |(_, n)| n);
                     if WARN_AFTER.get(count).is_some_and(|after| stuck >= *after) {
                         tracing::warn!(
@@ -79,8 +94,7 @@ impl Watchdog {
     }
 
     pub fn frame_started(&self) {
-        let now = self.shared.now();
-        self.shared.frame_started.store(now, Ordering::Relaxed);
+        self.shared.frame_started.store(now(), Ordering::Relaxed);
     }
 
     pub fn frame_ended(&self) {
@@ -99,5 +113,17 @@ mod tests {
         assert_ne!(w.shared.frame_started.load(Ordering::Relaxed), 0);
         w.frame_ended();
         assert_eq!(w.shared.frame_started.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn time_in_a_native_dialog_is_not_counted() {
+        let before = now();
+        let inside = modal(|| {
+            assert!(MODALS.load(Ordering::Relaxed) > 0);
+            std::thread::sleep(Duration::from_millis(5));
+            42
+        });
+        assert_eq!(inside, 42);
+        assert!(MODAL_CLOSED.load(Ordering::Relaxed) > before);
     }
 }
