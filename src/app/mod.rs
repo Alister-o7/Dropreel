@@ -11,6 +11,7 @@ mod show_detail;
 pub mod state;
 mod theme;
 mod toasts;
+mod watchdog;
 mod widgets;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -163,6 +164,7 @@ pub struct DropReelApp {
     resume_prompt: Option<(MovieId, f64)>,
 
     encode_queue: EncodeQueue,
+    watchdog: watchdog::Watchdog,
     detector: Arc<EncoderDetector>,
     encode_preview: Option<PreviewDialog>,
     finished_encodes: VecDeque<EncodeOutcome>,
@@ -283,6 +285,7 @@ impl DropReelApp {
             quit_prompt: false,
             allow_close: false,
             play_after_import: None,
+            watchdog: watchdog::Watchdog::start(),
             reported_failures: HashSet::new(),
             reload_requested: false,
             last_reload: Instant::now(),
@@ -921,13 +924,13 @@ impl DropReelApp {
 
     /// Saves where playback got to and, with `unload`, stops mpv.
     fn end_playback(&mut self, finished: bool, unload: bool) {
-        if let (Some(np), Ok(player)) = (&self.now_playing, &self.player) {
+        if let (Some(np), Ok(player)) = (&self.now_playing, &mut self.player) {
             tracing::info!(
                 "stopped \"{}\" at {:?} (finished: {finished})",
                 np.title,
                 player.position()
             );
-            tracing::info!("playback stats: {}", player.diagnostics());
+            player.log_diagnostics();
         }
         self.save_playback_position(finished);
         if unload && let Ok(player) = self.player.as_mut() {
@@ -1172,6 +1175,7 @@ impl DropReelApp {
 
 impl eframe::App for DropReelApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.watchdog.frame_started();
         let ctx = ui.ctx().clone();
         self.process_events();
         self.maybe_reload(&ctx);
@@ -1192,6 +1196,11 @@ impl eframe::App for DropReelApp {
         if self.now_playing.is_some() {
             player_view::show(self, ui, frame);
         } else {
+            // Nothing is playing, but mpv may still be sending replies and log messages about
+            // the file that was.
+            if let Ok(player) = self.player.as_mut() {
+                player.poll_events();
+            }
             library_view::sidebar(self, ui);
             if self.selected.is_some() {
                 self.detail_shown = self.selected;
@@ -1216,6 +1225,7 @@ impl eframe::App for DropReelApp {
         if self.imports_running > 0 {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
+        self.watchdog.frame_ended();
     }
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {

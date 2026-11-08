@@ -167,7 +167,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     player.set_display_fps(np.refresh.poll(frame));
     if np.diagnostics_at.is_some_and(|t| Instant::now() >= t) {
         np.diagnostics_at = None;
-        tracing::info!("playback stats: {}", player.diagnostics());
+        player.log_diagnostics();
     }
 
     let pos = player.position();
