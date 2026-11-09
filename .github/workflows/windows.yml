@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: packaging/deps
-          key: deps-${{ hashFiles('packaging/package.ps1') }}-v1
+          key: deps-${{ hashFiles('packaging/package.ps1') }}-v2
 
       - name: Download libmpv and ffmpeg
         shell: pwsh
@@ -120,7 +120,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: packaging/deps
-          key: deps-${{ hashFiles('packaging/package.ps1') }}-v1
+          key: deps-${{ hashFiles('packaging/package.ps1') }}-v2
 
       - name: Download libmpv and ffmpeg
         shell: pwsh

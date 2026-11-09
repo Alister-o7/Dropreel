@@ -49,6 +49,9 @@ pub struct NowPlaying {
     up_next_since: Option<Instant>,
     /// The card was cancelled: the episode plays on to its end, then back to the library.
     up_next_cancelled: bool,
+    /// When (egui's input time) the picture was clicked, while waiting to see whether it
+    /// becomes a double-click.
+    pending_click: Option<f64>,
     /// A click on the picture played or paused it: when, and whether it is now paused.
     click_flash: Option<(Instant, bool)>,
     /// The volume last frame, and when it last changed (by slider, keys or anything else).
@@ -79,6 +82,7 @@ impl NowPlaying {
             next: None,
             up_next_since: None,
             up_next_cancelled: false,
+            pending_click: None,
             click_flash: None,
             last_volume: None,
             volume_changed: None,
@@ -163,7 +167,7 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     player.set_display_fps(np.refresh.poll(frame));
     if np.diagnostics_at.is_some_and(|t| Instant::now() >= t) {
         np.diagnostics_at = None;
-        tracing::info!("playback stats: {}", player.diagnostics());
+        player.log_diagnostics();
     }
 
     let pos = player.position();
@@ -253,14 +257,29 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                 Rect::from_min_max(rect.min, pos2(rect.right(), rect.bottom() - BAR_HEIGHT));
             let video = ui.interact(picture, ui.scope_id().with("video"), Sense::click());
             let video = widgets::named(video, "Video");
-            // Like Netflix, a click on the picture plays or pauses. A double-click (two clicks:
-            // pause, then play again) toggles fullscreen.
-            if video.clicked() && np.loaded {
-                player.set_paused(!paused);
-                np.click_flash = Some((Instant::now(), !paused));
-            }
+            // Like Netflix, a click on the picture plays or pauses, and a double-click toggles
+            // fullscreen. A click waits out the double-click time first, so the two clicks of a
+            // double-click don't also pause and play again.
             if video.double_clicked() {
+                np.pending_click = None;
                 toggle_fullscreen(&ctx);
+            } else if video.clicked() && np.loaded {
+                np.pending_click = Some(ctx.input(|i| i.time));
+            }
+            if let Some(at) = np.pending_click {
+                // On egui's clock, which is the one it tells double-clicks by.
+                let double_click = ctx.options(|o| o.input_options.max_double_click_delay);
+                let waited = ctx.input(|i| i.time) - at;
+                // A second press within the double-click time makes it a double-click when it
+                // is released, however long it is held.
+                if waited >= double_click && !video.is_pointer_button_down_on() {
+                    np.pending_click = None;
+                    player.set_paused(!paused);
+                    np.click_flash = Some((Instant::now(), !paused));
+                } else {
+                    let left = (double_click - waited).max(0.0);
+                    ctx.request_repaint_after(Duration::from_secs_f64(left));
+                }
             }
             if let Some((at, now_paused)) = np.click_flash {
                 if at.elapsed() < CLICK_FLASH {

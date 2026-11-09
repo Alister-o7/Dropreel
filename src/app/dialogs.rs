@@ -7,6 +7,7 @@ use eframe::egui::{self, Align, Color32, Id, Layout, Margin, RichText, Vec2, vec
 
 use super::icons;
 use super::theme::{self, palette, radius};
+use super::watchdog;
 use super::widgets::{self, ButtonKind};
 use super::{Action, DropReelApp, OriginalChoice, PreviewDialog};
 use crate::encode::{EncodeOutcome, EncodePreview, Encoder};
@@ -224,7 +225,7 @@ fn path_field(ui: &mut egui::Ui, id: &str, value: &mut Option<PathBuf>, found: O
             *value = (!text.is_empty()).then(|| PathBuf::from(&text));
         }
         if widgets::button(ui, ButtonKind::Secondary, None, "Browse…").clicked()
-            && let Some(file) = rfd::FileDialog::new().pick_file()
+            && let Some(file) = watchdog::modal(|| rfd::FileDialog::new().pick_file())
         {
             *value = Some(file);
         }
@@ -289,7 +290,7 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
             }
             ui.horizontal(|ui| {
                 if widgets::button(ui, ButtonKind::Secondary, Some(icons::FOLDER_PLUS), "Add folder…").clicked()
-                    && let Some(folder) = rfd::FileDialog::new().pick_folder()
+                    && let Some(folder) = watchdog::modal(|| rfd::FileDialog::new().pick_folder())
                     && !draft.watched_folders.contains(&folder)
                 {
                     draft.watched_folders.push(folder);

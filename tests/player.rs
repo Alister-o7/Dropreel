@@ -80,6 +80,17 @@ impl Session {
         });
     }
 
+    /// Asks mpv for the diagnostics line and waits for it (it is put together from replies).
+    fn diagnostics(&mut self) -> String {
+        let before = self.player.last_diagnostics().map(str::to_string);
+        self.player.log_diagnostics();
+        self.wait("diagnostics", LOAD_TIMEOUT, |s| {
+            s.player.last_diagnostics().is_some()
+                && s.player.last_diagnostics().map(str::to_string) != before
+        });
+        self.player.last_diagnostics().unwrap().to_string()
+    }
+
     fn position(&self) -> f64 {
         self.player.position().unwrap()
     }
@@ -372,6 +383,32 @@ fn loading_a_new_file_replaces_the_current_one() {
 }
 
 #[test]
+fn a_file_replaced_before_it_finished_loading_sends_no_events_for_the_next() {
+    let Some(fx) = setup() else { return };
+    let mut s = Session::new();
+    for round in 0..4 {
+        s.events.clear();
+        // The next episode asked for twice in quick succession: mpv may well have started (or
+        // even loaded) the first by the time it reads the second.
+        s.player.load(&fx.mkv, None).unwrap();
+        std::thread::sleep(Duration::from_millis(40 * round));
+        s.player.load(&fx.long, Some(30.0)).unwrap();
+        s.wait("the second file to start", LOAD_TIMEOUT, |s| {
+            s.player.started()
+        });
+        s.idle(Duration::from_millis(300));
+        let loads = s.events.iter().filter(|e| **e == PlayerEvent::FileLoaded);
+        assert_eq!(loads.count(), 1, "round {round}: {:?}", s.events);
+        assert!((s.player.duration().unwrap() - 90.0).abs() < 1.0);
+        assert!(
+            (29.0..33.0).contains(&s.position()),
+            "round {round}: at {}",
+            s.position()
+        );
+    }
+}
+
+#[test]
 fn eof_from_the_previous_file_does_not_leak_into_the_next() {
     let Some(fx) = setup() else { return };
     let mut s = Session::new();
@@ -405,9 +442,9 @@ fn smooth_motion_and_diagnostics_work_without_a_display() {
     let mut s = Session::new();
     s.player.set_smooth_motion(true);
     s.player.set_display_fps(Some(60.0));
-    s.play(&fx.mkv, None);
+    s.play(&fx.long, None);
     s.wait_past(0.5);
-    let diag = s.player.diagnostics();
+    let diag = s.diagnostics();
     for key in [
         "hwdec-current=",
         "video-sync=display-resample",
@@ -420,7 +457,7 @@ fn smooth_motion_and_diagnostics_work_without_a_display() {
     s.player.set_display_fps(None);
     let at = s.position();
     s.wait_past(at + 0.3);
-    assert!(s.player.diagnostics().contains("video-sync=audio"));
+    assert!(s.diagnostics().contains("video-sync=audio"));
 }
 
 #[test]
