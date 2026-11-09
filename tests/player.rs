@@ -442,7 +442,7 @@ fn smooth_motion_and_diagnostics_work_without_a_display() {
     let mut s = Session::new();
     s.player.set_smooth_motion(true);
     s.player.set_display_fps(Some(60.0));
-    s.play(&fx.mkv, None);
+    s.play(&fx.long, None);
     s.wait_past(0.5);
     let diag = s.diagnostics();
     for key in [
