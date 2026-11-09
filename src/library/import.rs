@@ -261,6 +261,13 @@ pub fn run_import(
             continue;
         }
         let matches = db.find_by_fingerprint(&c.info.fingerprint)?;
+        // The same race between the check above and this one: the match is this very file.
+        if matches.iter().any(|(_, p, _)| *p == path) {
+            if report_known {
+                report.skipped.push((path, "already in the library".into()));
+            }
+            continue;
+        }
         if let Some((id, _, title)) = matches.iter().find(|(_, p, _)| !p.exists()) {
             db.relink(*id, &path, c.info.size, &c.info.fingerprint)?;
             report.relinked.push((title.clone(), path));
