@@ -357,6 +357,22 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     }
 }
 
+/// The empty player, while a video Dropreel was started for is being opened.
+pub fn opening(ui: &mut egui::Ui) {
+    egui::CentralPanel::no_frame()
+        .frame(egui::Frame::NONE.fill(theme::ramp::N950))
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Loading…",
+                egui::FontId::proportional(20.0),
+                Color32::GRAY,
+            );
+        });
+}
+
 fn handle_keys(
     ctx: &egui::Context,
     player: &mut Player,

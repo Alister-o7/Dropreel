@@ -969,6 +969,56 @@ fn opening_a_video_from_outside_just_plays_it_and_closing_the_player_closes_drop
     until(&mut app, "the window to close", asked_to_close);
 }
 
+/// Runs frames until the player shows, failing if the library shows first, even for a frame.
+fn straight_to_the_player(app: &mut App, what: &str) {
+    let start = Instant::now();
+    loop {
+        app.step();
+        assert!(
+            !has(app, "Add movies") && !has(app, "Settings"),
+            "the library showed while opening {what}"
+        );
+        if in_player(app) || has_text(app, "Resume from") {
+            return;
+        }
+        assert!(
+            start.elapsed() < TIMEOUT,
+            "timed out opening {what}: {}",
+            labels(app)
+        );
+        std::thread::sleep(Duration::from_millis(15));
+    }
+}
+
+#[test]
+fn opening_a_video_from_outside_never_shows_the_library_first() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.long, &root.path().join("movies"), None);
+    // Not in the library.
+    let mut app = launch(root.path(), vec![file.clone()]);
+    straight_to_the_player(&mut app, "a video outside the library");
+    drop(app);
+
+    // Added to the library first.
+    let settings = root.path().join("data").join("settings.toml");
+    std::fs::write(&settings, "open_files = \"add_to_library\"\n").unwrap();
+    let mut app = launch(root.path(), vec![file.clone()]);
+    straight_to_the_player(&mut app, "a video being added to the library");
+    drop(app);
+
+    // In the library, with a place to resume from: the question shows over the empty player.
+    std::fs::write(&settings, "").unwrap();
+    let library = db(root.path());
+    let movie = library.all_movies().unwrap().remove(0);
+    library.set_resume(movie.id, Some(40.0)).unwrap();
+    let mut app = launch(root.path(), vec![file]);
+    straight_to_the_player(&mut app, "a library video with a resume point");
+    assert!(has_text(&app, "Resume from"), "{}", labels(&app));
+    click_containing(&mut app, "Resume from");
+    until(&mut app, "the player", |a| in_player(a) && has(a, "Pause"));
+}
+
 #[test]
 fn opening_a_video_from_outside_can_add_it_to_the_library() {
     let Some(fx) = playback_setup() else { return };
