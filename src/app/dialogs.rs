@@ -327,28 +327,60 @@ pub(super) fn player_settings(
 /// Windows' Default apps settings, at Dropreel's page when the installer registered it there
 /// (Windows 11; Windows 10 shows the general page).
 fn open_default_apps() {
-    let exe = std::env::current_exe().ok();
-    let installed = exe
-        .as_ref()
-        .and_then(|e| e.parent())
-        .is_some_and(|dir| dir.join("unins000.exe").exists());
-    // Installed for this user alone, it lives under %LOCALAPPDATA%.
-    let per_user = exe
-        .as_ref()
-        .zip(std::env::var_os("LOCALAPPDATA"))
-        .is_some_and(|(e, local)| {
-            e.to_string_lossy()
-                .to_lowercase()
-                .starts_with(&local.to_string_lossy().to_lowercase())
-        });
-    let uri = match (installed, per_user) {
-        (true, true) => "ms-settings:defaultapps?registeredAppUser=Dropreel",
-        (true, false) => "ms-settings:defaultapps?registeredAppMachine=Dropreel",
-        (false, _) => "ms-settings:defaultapps",
+    let uri = match registered_app() {
+        Some(Registered::User) => "ms-settings:defaultapps?registeredAppUser=Dropreel",
+        Some(Registered::Machine) => "ms-settings:defaultapps?registeredAppMachine=Dropreel",
+        None => "ms-settings:defaultapps",
     };
     if let Err(e) = opener::open(uri) {
         tracing::warn!("could not open {uri}: {e}");
     }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+enum Registered {
+    /// Installed for this user only.
+    User,
+    /// Installed for everyone.
+    Machine,
+}
+
+/// Where the installer registered Dropreel for Default apps.
+#[cfg(windows)]
+fn registered_app() -> Option<Registered> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW,
+    };
+    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let key = wide("Software\\RegisteredApplications");
+    let name = wide("Dropreel");
+    let has = |root: HKEY| {
+        // SAFETY: valid NUL-terminated strings; no data is read back.
+        unsafe {
+            RegGetValueW(
+                root,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            ) == ERROR_SUCCESS
+        }
+    };
+    if has(HKEY_CURRENT_USER) {
+        Some(Registered::User)
+    } else if has(HKEY_LOCAL_MACHINE) {
+        Some(Registered::Machine)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(windows))]
+fn registered_app() -> Option<Registered> {
+    None
 }
 
 fn settings_section(ui: &mut egui::Ui, icon: &str, title: &str) {

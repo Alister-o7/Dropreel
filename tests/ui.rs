@@ -1026,6 +1026,62 @@ fn a_video_handed_over_by_a_later_launch_replaces_what_plays() {
 }
 
 #[test]
+fn videos_opened_together_play_in_turn_then_dropreel_closes() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("movies");
+    let short = copy_into(&fx.mkv, &dir, Some("A short one.mkv"));
+    let long = copy_into(&fx.long, &dir, Some("B long one.mkv"));
+    let mut app = launch(root.path(), vec![]);
+    // As if both were selected in Explorer and opened; they play in name order.
+    app.state_mut().open_external(vec![long.clone(), short.clone()], true);
+    until(&mut app, "the short one", |a| {
+        in_player(a) && shown_time(a).is_some_and(|t| t <= 6)
+    });
+    until(&mut app, "the long one, after it", |a| {
+        in_player(a) && shown_time(a).is_some_and(|t| t > 60)
+    });
+    assert!(!asked_to_close(&app));
+    app.key_press(Key::Escape);
+    until(&mut app, "the window to close", asked_to_close);
+    drop(app);
+
+    // A launch that hands its video over moments later (slow to start) joins the queue
+    // instead of interrupting.
+    let mut app = launch(root.path(), vec![]);
+    app.state_mut().open_external(vec![short], true);
+    until(&mut app, "the short one", |a| {
+        in_player(a) && shown_time(a).is_some_and(|t| t <= 6)
+    });
+    app.state_mut().open_external(vec![long], false);
+    run_for(&mut app, Duration::from_millis(500));
+    assert!(shown_time(&app).is_some_and(|t| t <= 6), "{}", labels(&app));
+    until(&mut app, "the long one, after it", |a| {
+        in_player(a) && shown_time(a).is_some_and(|t| t > 60)
+    });
+}
+
+#[test]
+fn the_player_menu_never_overwrites_unreadable_settings() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.long, &root.path().join("movies"), None);
+    let settings = root.path().join("data").join("settings.toml");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    // E.g. written by a newer version, or edited by hand.
+    let original = "watched_folders = [\"D:/Movies\"]\nthreshold_gb = \"lots\"\n";
+    std::fs::write(&settings, original).unwrap();
+    let mut app = launch(root.path(), vec![file]);
+    until(&mut app, "the player", |a| in_player(a) && has(a, "Pause"));
+    click(&mut app, "Player settings");
+    until(&mut app, "the menu", |a| has(a, "Smooth motion"));
+    click(&mut app, "Time played and length");
+    app.key_press(Key::Escape);
+    until(&mut app, "the note", |a| has_text(a, "wasn't overwritten"));
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), original);
+}
+
+#[test]
 fn the_player_settings_menu_changes_settings_on_the_spot() {
     let Some(fx) = playback_setup() else { return };
     let root = tempfile::tempdir().unwrap();

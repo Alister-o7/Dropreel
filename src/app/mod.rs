@@ -42,6 +42,20 @@ use toasts::Toasts;
 const PREFS_KEY: &str = "dropreel-prefs";
 
 /// Things the UI asked for during a frame, applied after drawing.
+/// How long Dropreel waits for more files from outside before opening what it got.
+const EXTERNAL_QUIET: Duration = Duration::from_millis(400);
+
+/// Videos from outside that arrive this soon after others are taken as part of the same
+/// selection (Explorer starts one launch per selected video; some start late).
+const SELECTION_STRAGGLERS: Duration = Duration::from_secs(2);
+
+#[derive(Default)]
+struct PendingOpen {
+    paths: Vec<PathBuf>,
+    at_startup: bool,
+    last: Option<Instant>,
+}
+
 pub enum Action {
     Play(MovieId),
     /// Start playback, optionally from a resume position.
@@ -177,12 +191,21 @@ pub struct DropReelApp {
     quit_prompt: bool,
     allow_close: bool,
     /// A file opened with "Open with → Dropreel": play it once it's in the library.
-    play_after_import: Option<PathBuf>,
     /// The library movie being started for a video opened from outside, when Dropreel was
     /// started just for it: once playing, closing the player closes Dropreel.
     close_after: Option<MovieId>,
     /// Settings changed in the player's menu and not yet saved.
     settings_unsaved: bool,
+    /// settings.toml couldn't be read at startup: don't overwrite it from the player's menu.
+    settings_load_failed: bool,
+    /// Files from outside waiting to be opened together (see `queue_external`).
+    external: PendingOpen,
+    /// The other videos of a selection opened together, to play after this one.
+    play_queue: VecDeque<PathBuf>,
+    /// When videos from outside were last opened (see `SELECTION_STRAGGLERS`).
+    external_opened: Option<Instant>,
+    /// Set while the window closes, so later launches wait instead of handing files over.
+    accepting: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// The window was asked to close (after playing a video Dropreel was opened for).
     closing: bool,
     /// Files a background scan failed to import that the user has already been told about.
@@ -293,9 +316,13 @@ impl DropReelApp {
             encode_badges: HashMap::new(),
             quit_prompt: false,
             allow_close: false,
-            play_after_import: None,
             close_after: None,
             settings_unsaved: false,
+            settings_load_failed: settings_warning.is_some(),
+            external: PendingOpen::default(),
+            play_queue: VecDeque::new(),
+            external_opened: None,
+            accepting: None,
             closing: false,
             watchdog: watchdog::Watchdog::start(),
             reported_failures: HashSet::new(),
@@ -316,9 +343,11 @@ impl DropReelApp {
         jobs::upgrade_posters(app.env(), app.events.clone());
         // Pick up files added to watched folders while Dropreel was closed, and find moved files.
         if !app.settings.watched_folders.is_empty() {
-            app.start_import(app.settings.watched_folders.clone(), false);
+            app.start_import(app.settings.watched_folders.clone(), false, None);
         }
-        app.open_external(open_paths, true);
+        if !open_paths.is_empty() {
+            app.queue_external(open_paths, true);
+        }
         Ok(app)
     }
 
@@ -331,22 +360,44 @@ impl DropReelApp {
             return;
         }
         tracing::info!("opening {paths:?} (at startup: {at_startup})");
-        let [single] = paths.as_slice() else {
-            self.start_import(paths, true);
-            return;
-        };
-        if !scan::is_video_file(single) {
-            self.start_import(paths, true);
-            return;
-        }
-        let path = scan::normalize(single);
-        if !path.is_file() {
-            self.toasts.add(
-                ToastKind::Error,
-                format!("{} was not found.", path.display()),
-            );
+        // Replacing a video Dropreel was opened for keeps closing when done (e.g. the other
+        // videos of a selection opened together, each from a launch of its own).
+        let at_startup = at_startup
+            || self.close_after.is_some()
+            || self
+                .now_playing
+                .as_ref()
+                .is_some_and(|np| np.close_when_done);
+        let videos = paths.iter().all(|p| scan::is_video_file(p) && p.is_file());
+        if !videos || (paths.len() > 1 && self.settings.open_files == OpenFiles::AddToLibrary) {
+            self.start_import(paths, true, None);
             return;
         }
+        let mut queue: Vec<PathBuf> = paths.iter().map(|p| scan::normalize(p)).collect();
+        // Straggling launches of a selection opened together (slow to start) join its queue
+        // rather than interrupt it.
+        let straggler = self
+            .external_opened
+            .is_some_and(|t| t.elapsed() < SELECTION_STRAGGLERS)
+            && self.now_playing.is_some();
+        if straggler {
+            let mut all: Vec<PathBuf> = self.play_queue.drain(..).chain(queue).collect();
+            all.sort();
+            all.dedup();
+            self.play_queue = all.into();
+            return;
+        }
+        self.external_opened = Some(Instant::now());
+        // Several videos selected together play one after another, in name order.
+        queue.sort();
+        queue.dedup();
+        let first = queue.remove(0);
+        self.play_queue = queue.into();
+        self.open_video(first, at_startup);
+    }
+
+    /// Plays one video handed to Dropreel from outside (see `open_external`).
+    fn open_video(&mut self, path: PathBuf, at_startup: bool) {
         // Without the built-in player there is nothing to play it with: handing it to the
         // system's default player could be Dropreel again, and round and round.
         if let Err(reason) = &self.player {
@@ -356,13 +407,17 @@ impl DropReelApp {
             );
             return;
         }
-        // Whatever was playing gives way, its position saved.
+        // Whatever was playing stops, its position saved.
         if self.now_playing.is_some() {
-            self.end_playback(false, false);
+            self.end_playback(false, true);
         }
         self.resume_prompt = None;
         self.close_after = None;
-        match (self.settings.open_files, self.find_movie_for_file(&path)) {
+        let found = self
+            .find_movie_for_file(&path)
+            // A library entry whose file is missing is a copy elsewhere: play this one.
+            .filter(|id| !self.lib.missing.contains(id));
+        match (self.settings.open_files, found) {
             (_, Some(id)) => {
                 if at_startup && self.settings.open_files == OpenFiles::JustPlay {
                     self.close_after = Some(id);
@@ -371,27 +426,58 @@ impl DropReelApp {
             }
             (OpenFiles::JustPlay, None) => self.play_file(&path, at_startup),
             (OpenFiles::AddToLibrary, None) => {
-                self.play_after_import = Some(path);
-                self.start_import(paths, false);
+                self.events
+                    .context()
+                    .send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                self.start_import(vec![path.clone()], false, Some(path));
             }
+        }
+    }
+
+    /// Files from outside are opened together once none has arrived for a moment: selecting
+    /// several videos in Explorer starts one launch per video, all at once.
+    fn queue_external(&mut self, paths: Vec<PathBuf>, at_startup: bool) {
+        self.external.paths.extend(paths);
+        self.external.at_startup |= at_startup;
+        self.external.last = Some(Instant::now());
+    }
+
+    fn open_queued_external(&mut self, ctx: &egui::Context) {
+        let Some(last) = self.external.last else {
+            return;
+        };
+        let quiet = last.elapsed();
+        if quiet < EXTERNAL_QUIET {
+            ctx.request_repaint_after(EXTERNAL_QUIET - quiet);
+            return;
+        }
+        let pending = std::mem::take(&mut self.external);
+        self.open_external(pending.paths, pending.at_startup);
+    }
+
+    /// Takes files from later launches of Dropreel: they open in this window, which comes to
+    /// the front.
+    pub fn listen_to_other_launches(&mut self, server: crate::instance::Server) {
+        self.accepting = Some(server.accepting());
+        let events = self.events.clone();
+        server.serve(move |paths| {
+            let ctx = events.context();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            events.send(AppEvent::OpenPaths(paths));
+        });
+    }
+
+    /// Whether later launches may hand their files to this window (not while it closes).
+    fn accept_other_launches(&self, accept: bool) {
+        if let Some(a) = &self.accepting {
+            a.store(accept, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
     /// Whether Dropreel asked for its window to close, its job done.
     pub fn is_closing(&self) -> bool {
         self.closing
-    }
-
-    /// Where later launches of Dropreel hand over their files: they open in this window, which
-    /// comes to the front.
-    pub fn external_opener(&self) -> impl Fn(Vec<PathBuf>) + Send + 'static {
-        let events = self.events.clone();
-        move |paths| {
-            let ctx = events.context();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            events.send(AppEvent::OpenPaths(paths));
-        }
     }
 
     /// Plays a video that isn't in the library, without adding it.
@@ -498,9 +584,21 @@ impl DropReelApp {
         }
     }
 
-    fn start_import(&mut self, paths: Vec<PathBuf>, interactive: bool) {
+    /// `play_after`: a video to play once this import has added it.
+    fn start_import(
+        &mut self,
+        paths: Vec<PathBuf>,
+        interactive: bool,
+        play_after: Option<PathBuf>,
+    ) {
         self.imports_running += 1;
-        jobs::import(self.env(), self.events.clone(), paths, interactive);
+        jobs::import(
+            self.env(),
+            self.events.clone(),
+            paths,
+            interactive,
+            play_after,
+        );
     }
 
     fn reload(&mut self) {
@@ -550,11 +648,12 @@ impl DropReelApp {
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 AppEvent::LibraryChanged => self.reload_requested = true,
-                AppEvent::OpenPaths(paths) => self.open_external(paths, false),
+                AppEvent::OpenPaths(paths) => self.queue_external(paths, false),
                 AppEvent::ImportProgress(p) => self.import_progress = Some(p),
                 AppEvent::ImportFinished {
                     mut report,
                     interactive,
+                    play_after,
                 } => {
                     // Scans of watched folders run at every start and on every change; tell
                     // the user about a file that can't be imported only once per session.
@@ -574,7 +673,10 @@ impl DropReelApp {
                         self.import_progress = None;
                     }
                     self.reload_requested = true;
-                    if let Some(path) = self.play_after_import.take() {
+                    // Unless something else has started playing meanwhile.
+                    if let Some(path) = play_after
+                        && self.now_playing.is_none()
+                    {
                         self.reload();
                         match self.find_movie_for_file(&path) {
                             Some(id) => self.actions.push(Action::Play(id)),
@@ -610,7 +712,7 @@ impl DropReelApp {
                             .add(ToastKind::Error, format!("Import failed: {e}")),
                     }
                 }
-                AppEvent::WatchedFiles(files) => self.start_import(files, false),
+                AppEvent::WatchedFiles(files) => self.start_import(files, false, None),
                 AppEvent::TmdbResults { search_id, result } => {
                     self.dialogs.tmdb_results(search_id, result)
                 }
@@ -694,6 +796,7 @@ impl DropReelApp {
             Action::PlayNextEpisode => self.play_next_episode(),
             Action::PlaybackFailed(message) => {
                 self.toasts.add(ToastKind::Error, message);
+                self.play_queue.clear();
                 // Stay open to show why, even if Dropreel was opened just for this video.
                 if let Some(np) = self.now_playing.as_mut() {
                     np.close_when_done = false;
@@ -867,7 +970,7 @@ impl DropReelApp {
                         .add_filter("Video files", scan::VIDEO_EXTENSIONS)
                         .pick_files()
                 }) {
-                    self.start_import(files, true);
+                    self.start_import(files, true, None);
                 }
             }
             Action::AddFolder => {
@@ -876,10 +979,10 @@ impl DropReelApp {
                         .set_title("Add a folder of movies")
                         .pick_folder()
                 }) {
-                    self.start_import(vec![folder], true);
+                    self.start_import(vec![folder], true, None);
                 }
             }
-            Action::Import(paths) => self.start_import(paths, true),
+            Action::Import(paths) => self.start_import(paths, true, None),
             Action::OpenSettings => self.dialogs.settings = Some(Box::new(self.settings.clone())),
             Action::SaveSettings(new) => self.save_settings(*new, ctx),
             Action::AskReencode(id) => self.ask_reencode(id),
@@ -908,7 +1011,7 @@ impl DropReelApp {
                     self.toasts
                         .add(ToastKind::Info, "Add a watched folder in Settings first.");
                 } else {
-                    self.start_import(self.settings.watched_folders.clone(), false);
+                    self.start_import(self.settings.watched_folders.clone(), false, None);
                     self.toasts
                         .add(ToastKind::Info, "Scanning watched folders…");
                 }
@@ -918,8 +1021,13 @@ impl DropReelApp {
 
     fn play(&mut self, id: MovieId) {
         let Some(movie) = self.lib.get(id) else {
+            self.close_after = None;
             return;
         };
+        if self.lib.missing.contains(&id) || self.player.is_err() {
+            // Not playing it here, so not closing Dropreel after it either.
+            self.close_after = None;
+        }
         if self.lib.missing.contains(&id) {
             self.selected = Some(Detail::Movie(id));
             self.toasts.add(
@@ -947,7 +1055,16 @@ impl DropReelApp {
             return;
         }
         match player_view::should_offer_resume(movie.resume_pos, movie.duration) {
-            Some(pos) => self.resume_prompt = Some((id, pos)),
+            Some(pos) => {
+                self.resume_prompt = Some((id, pos));
+                if self.now_playing.is_none() {
+                    // The prompt shows over the library (e.g. for a video opened from Explorer
+                    // while one played in fullscreen).
+                    self.events
+                        .context()
+                        .send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                }
+            }
             None => self.start_playback(id, None),
         }
     }
@@ -960,11 +1077,12 @@ impl DropReelApp {
             return;
         };
         tracing::info!("playing \"{}\" from {start:?}", movie.title);
+        let close_when_done = self.close_after.take() == Some(id);
         match player.load(&movie.path, start) {
             Ok(()) => {
                 let mut np =
                     player_view::NowPlaying::new(Some(id), movie.title.clone(), movie.duration);
-                np.close_when_done = self.close_after.take() == Some(id);
+                np.close_when_done = close_when_done;
                 if let Some(show) = movie.show_id.and_then(|s| self.lib.show(s)) {
                     let code = movie.episode_code().unwrap_or_default();
                     np.subtitle = Some(format!("{code} · {}", movie.title));
@@ -1044,10 +1162,19 @@ impl DropReelApp {
         let Some(np) = &self.now_playing else {
             return;
         };
-        if np.close_when_done {
+        let close_when_done = np.close_when_done;
+        // The next of several videos opened together, at the end of one.
+        if finished && let Some(next) = self.play_queue.pop_front() {
+            self.end_playback(true, false);
+            self.open_video(next, close_when_done);
+            return;
+        }
+        self.play_queue.clear();
+        if close_when_done {
             // Dropreel was opened just to play this.
             self.end_playback(finished, true);
             self.closing = true;
+            self.accept_other_launches(false);
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -1109,6 +1236,15 @@ impl DropReelApp {
     /// Saves settings changed in the player's menu (already applied).
     fn save_player_settings(&mut self) {
         self.settings_unsaved = false;
+        if self.settings_load_failed {
+            // Writing would replace the user's unreadable settings (watched folders, TMDb key…)
+            // with defaults. Saving from the Settings dialog is a deliberate choice to.
+            self.toasts.add(
+                ToastKind::Info,
+                "The change applies until Dropreel closes: settings.toml couldn't be read, so it wasn't overwritten.",
+            );
+            return;
+        }
         if let Err(e) = self.settings.save(&self.paths.settings) {
             self.toasts
                 .add(ToastKind::Error, format!("Could not save settings: {e:#}"));
@@ -1121,6 +1257,8 @@ impl DropReelApp {
                 .add(ToastKind::Error, format!("Could not save settings: {e:#}"));
             return;
         }
+        self.settings_load_failed = false;
+        self.settings_unsaved = false;
         let old = std::mem::replace(&mut self.settings, new);
         self.dialogs.settings = None;
         self.apply_theme(ctx);
@@ -1146,7 +1284,7 @@ impl DropReelApp {
                 .cloned()
                 .collect();
             if !added.is_empty() {
-                self.start_import(added, true);
+                self.start_import(added, true, None);
             }
         }
         self.toasts.add(ToastKind::Success, "Settings saved.");
@@ -1331,13 +1469,18 @@ impl eframe::App for DropReelApp {
         self.process_events();
         self.maybe_reload(&ctx);
         self.refresh_encode_state();
-        if ctx.input(|i| i.viewport().close_requested())
-            && self.encode_queue.is_busy()
-            && !self.allow_close
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.quit_prompt = true;
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if self.encode_queue.is_busy() && !self.allow_close {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.quit_prompt = true;
+                self.closing = false;
+                self.accept_other_launches(true);
+            } else {
+                // Later launches wait for this one to exit rather than hand over their files.
+                self.accept_other_launches(false);
+            }
         }
+        self.open_queued_external(&ctx);
         if self.filter_dirty {
             self.visible = state::visible_entries(&self.lib, &self.filter);
             self.filter_dirty = false;
@@ -1386,6 +1529,7 @@ impl eframe::App for DropReelApp {
     }
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        self.accept_other_launches(false);
         self.save_playback_position(false);
         if self.settings_unsaved {
             self.save_player_settings();

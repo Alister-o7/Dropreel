@@ -104,13 +104,19 @@ fn main() -> ExitCode {
         "Dropreel",
         options,
         Box::new(move |cc| match DropReelApp::new(cc, paths, open_paths) {
-            Ok(app) => {
+            Ok(mut app) => {
                 if let Some(server) = server {
-                    server.serve(app.external_opener());
+                    app.listen_to_other_launches(server);
                 }
                 Ok(Box::new(app))
             }
             Err(e) => {
+                // Later launches mustn't hand their files to a Dropreel that isn't starting.
+                if let Some(server) = &server {
+                    server
+                        .accepting()
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                }
                 let message = format!("Dropreel could not start:\n{e:#}");
                 fatal(&message);
                 Err(message.into())

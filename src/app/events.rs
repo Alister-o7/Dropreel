@@ -23,6 +23,8 @@ pub enum AppEvent {
     ImportFinished {
         report: Result<ImportReport, String>,
         interactive: bool,
+        /// A video to play now that it's in the library.
+        play_after: Option<PathBuf>,
     },
     /// A later launch of Dropreel handed over these files (e.g. another video opened from
     /// Explorer).
