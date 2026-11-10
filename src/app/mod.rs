@@ -204,6 +204,11 @@ pub struct DropReelApp {
     play_queue: VecDeque<PathBuf>,
     /// When videos from outside were last opened (see `SELECTION_STRAGGLERS`).
     external_opened: Option<Instant>,
+    /// Dropreel was started to play a video: the library stays hidden until it plays (or it
+    /// turns out it won't).
+    launching: bool,
+    /// Imports of videos from outside that play once added ("Add them to the library").
+    imports_to_play: usize,
     /// Set while the window closes, so later launches wait instead of handing files over.
     accepting: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// The window was asked to close (after playing a video Dropreel was opened for).
@@ -322,6 +327,8 @@ impl DropReelApp {
             external: PendingOpen::default(),
             play_queue: VecDeque::new(),
             external_opened: None,
+            launching: false,
+            imports_to_play: 0,
             accepting: None,
             closing: false,
             watchdog: watchdog::Watchdog::start(),
@@ -346,6 +353,9 @@ impl DropReelApp {
             app.start_import(app.settings.watched_folders.clone(), false, None);
         }
         if !open_paths.is_empty() {
+            app.launching = open_paths
+                .iter()
+                .all(|p| scan::is_video_file(p) && p.is_file());
             app.queue_external(open_paths, true);
         }
         Ok(app)
@@ -429,6 +439,7 @@ impl DropReelApp {
                 self.events
                     .context()
                     .send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                self.imports_to_play += 1;
                 self.start_import(vec![path.clone()], false, Some(path));
             }
         }
@@ -673,6 +684,9 @@ impl DropReelApp {
                         self.import_progress = None;
                     }
                     self.reload_requested = true;
+                    if play_after.is_some() {
+                        self.imports_to_play = self.imports_to_play.saturating_sub(1);
+                    }
                     // Unless something else has started playing meanwhile.
                     if let Some(path) = play_after
                         && self.now_playing.is_none()
@@ -1489,6 +1503,10 @@ impl eframe::App for DropReelApp {
 
         if self.now_playing.is_some() {
             player_view::show(self, ui, frame);
+        } else if self.launching {
+            // Started to play a video: what shows until it does is the player's own "Loading…",
+            // not a glimpse of the library.
+            player_view::opening(ui);
         } else {
             // Nothing is playing, but mpv may still be sending replies and log messages about
             // the file that was.
@@ -1515,6 +1533,16 @@ impl eframe::App for DropReelApp {
 
         for action in std::mem::take(&mut self.actions) {
             self.apply(action, &ctx);
+        }
+        if self.launching {
+            // Still on its way: being gathered with others, asking where to resume, or being
+            // added to the library first. Anything else (playing, or an error) ends the wait.
+            let waiting = self.external.last.is_some()
+                || self.resume_prompt.is_some()
+                || self.imports_to_play > 0;
+            if self.now_playing.is_some() || !waiting {
+                self.launching = false;
+            }
         }
         if self.imports_running > 0 {
             ctx.request_repaint_after(Duration::from_millis(250));
