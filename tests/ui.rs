@@ -1034,7 +1034,8 @@ fn videos_opened_together_play_in_turn_then_dropreel_closes() {
     let long = copy_into(&fx.long, &dir, Some("B long one.mkv"));
     let mut app = launch(root.path(), vec![]);
     // As if both were selected in Explorer and opened; they play in name order.
-    app.state_mut().open_external(vec![long.clone(), short.clone()], true);
+    app.state_mut()
+        .open_external(vec![long.clone(), short.clone()], true);
     until(&mut app, "the short one", |a| {
         in_player(a) && shown_time(a).is_some_and(|t| t <= 6)
     });
