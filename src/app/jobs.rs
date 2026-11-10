@@ -16,7 +16,13 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
 
 /// Imports `paths`. `interactive` imports (drag & drop, Add buttons) report everything,
 /// background ones (watched folders) stay quiet unless something was added.
-pub fn import(env: LibraryEnv, events: EventSink, paths: Vec<PathBuf>, interactive: bool) {
+pub fn import(
+    env: LibraryEnv,
+    events: EventSink,
+    paths: Vec<PathBuf>,
+    interactive: bool,
+    play_after: Option<PathBuf>,
+) {
     spawn("import", move || {
         let progress_events = events.clone();
         let change_events = events.clone();
@@ -34,6 +40,7 @@ pub fn import(env: LibraryEnv, events: EventSink, paths: Vec<PathBuf>, interacti
         events.send(AppEvent::ImportFinished {
             report,
             interactive,
+            play_after,
         });
     });
 }

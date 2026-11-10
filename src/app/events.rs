@@ -23,7 +23,12 @@ pub enum AppEvent {
     ImportFinished {
         report: Result<ImportReport, String>,
         interactive: bool,
+        /// A video to play now that it's in the library.
+        play_after: Option<PathBuf>,
     },
+    /// A later launch of Dropreel handed over these files (e.g. another video opened from
+    /// Explorer).
+    OpenPaths(Vec<PathBuf>),
     /// New files appeared in a watched folder.
     WatchedFiles(Vec<PathBuf>),
     TmdbResults {
@@ -54,6 +59,10 @@ impl EventSink {
     pub fn new(ctx: egui::Context) -> (Self, Receiver<AppEvent>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         (Self { tx, ctx }, rx)
+    }
+
+    pub fn context(&self) -> &egui::Context {
+        &self.ctx
     }
 
     pub fn send(&self, event: AppEvent) {

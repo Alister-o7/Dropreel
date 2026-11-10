@@ -12,7 +12,7 @@ use super::widgets;
 use super::{Action, DropReelApp};
 use crate::library::MovieId;
 use crate::player::{Player, PlayerEvent, RefreshRate, Track, TrackKind};
-use crate::settings::TimeDisplay;
+use crate::settings::Settings;
 use crate::util::format_duration;
 
 /// How often the playback position is saved while playing.
@@ -24,6 +24,11 @@ const DIAGNOSTICS_AFTER: Duration = Duration::from_secs(20);
 pub const BAR_HEIGHT: f32 = 104.0;
 /// Fraction of the movie after which it counts as watched.
 pub const WATCHED_FRACTION: f64 = 0.95;
+
+/// The player's settings menu (the gear at the top right).
+pub fn settings_menu_id() -> egui::Id {
+    egui::Id::unique("player_settings_menu")
+}
 
 /// How long the play/pause icon shows after a click on the picture.
 const CLICK_FLASH: Duration = Duration::from_millis(600);
@@ -39,7 +44,11 @@ const UP_NEXT_BEFORE_END: f64 = 60.0;
 pub const UP_NEXT_AFTER: Duration = Duration::from_secs(8);
 
 pub struct NowPlaying {
-    pub movie_id: MovieId,
+    /// The library entry, or `None` for a video opened from outside and just played.
+    pub movie_id: Option<MovieId>,
+    /// Close Dropreel when playback ends (Esc, Back or the end of the video): it was started
+    /// just to play this video.
+    pub close_when_done: bool,
     pub title: String,
     /// For an episode: "S01E02 · Episode title", under the show's title.
     pub subtitle: Option<String>,
@@ -74,9 +83,10 @@ pub struct NowPlaying {
 }
 
 impl NowPlaying {
-    pub fn new(movie_id: MovieId, title: String, known_duration: Option<f64>) -> Self {
+    pub fn new(movie_id: Option<MovieId>, title: String, known_duration: Option<f64>) -> Self {
         Self {
             movie_id,
+            close_when_done: false,
             title,
             subtitle: None,
             next: None,
@@ -139,8 +149,10 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
         actions,
         db,
         settings,
+        software_gl,
         ..
     } = app;
+    let software_gl = *software_gl;
     let (Ok(player), Some(np)) = (player.as_mut(), now_playing.as_mut()) else {
         actions.push(Action::StopPlayback { finished: false });
         return;
@@ -175,8 +187,9 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     if np.loaded {
         if np.last_save.elapsed() >= SAVE_INTERVAL {
             np.last_save = Instant::now();
-            if let Some(p) = resume_position(pos, dur)
-                && let Err(e) = db.set_resume(np.movie_id, Some(p))
+            if let Some(id) = np.movie_id
+                && let Some(p) = resume_position(pos, dur)
+                && let Err(e) = db.set_resume(id, Some(p))
             {
                 tracing::warn!("could not save position: {e}");
             }
@@ -186,7 +199,9 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
             && p >= d * WATCHED_FRACTION
         {
             np.watched_marked = true;
-            let _ = db.set_watched(np.movie_id, true);
+            if let Some(id) = np.movie_id {
+                let _ = db.set_watched(id, true);
+            }
         }
         let at_end = player.eof_reached();
         // An episode with another after it offers that one in its last minute (the last tenth
@@ -227,7 +242,10 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     let paused = player.paused();
     // Paused or not, the controls fade once the mouse has rested for the chosen time.
     let hide_after = Duration::from_secs_f64(settings.hide_controls_after);
-    let recently_active = np.controls_hovered || np.last_activity.elapsed() < hide_after;
+    // The controls stay while the settings menu is open.
+    let menu_open = egui::Popup::is_id_open(&ctx, settings_menu_id());
+    let recently_active =
+        menu_open || np.controls_hovered || np.last_activity.elapsed() < hide_after;
     // The controls sit over the video and fade out when the mouse rests, windowed or not.
     // They stay laid out while faded, so a click right after the mouse moves still lands.
     let controls_opacity =
@@ -263,7 +281,8 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
             if video.double_clicked() {
                 np.pending_click = None;
                 toggle_fullscreen(&ctx);
-            } else if video.clicked() && np.loaded {
+            } else if video.clicked() && np.loaded && !menu_open {
+                // (A click beside the open settings menu just closes it.)
                 np.pending_click = Some(ctx.input(|i| i.time));
             }
             if let Some(at) = np.pending_click {
@@ -312,7 +331,8 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
                     paused,
                     fullscreen,
                     controls_opacity,
-                    settings.time_display,
+                    settings,
+                    software_gl,
                 );
             });
             if let (Some(since), Some((_, next))) = (np.up_next_since, &np.next) {
@@ -484,8 +504,10 @@ fn controls(
     paused: bool,
     fullscreen: bool,
     opacity: f32,
-    time_display: TimeDisplay,
+    settings: &mut Settings,
+    software_gl: bool,
 ) {
+    let time_display = settings.time_display;
     ui.multiply_opacity(opacity);
     let painter = ui.painter().clone();
     let top = Rect::from_min_max(rect.left_top(), pos2(rect.right(), rect.top() + 56.0));
@@ -519,6 +541,7 @@ fn controls(
         painter.galley(sub_pos, sub, media::TEXT_WEAK);
     }
     painter.galley(title_pos, title, media::TEXT);
+    settings_menu(ui, top, settings, software_gl, actions);
     np.controls_hovered = ui
         .ctx()
         .pointer_hover_pos()
@@ -538,7 +561,7 @@ fn controls(
             let shown = np.seek_drag.or(pos).unwrap_or(0.0);
             ui.horizontal(|ui| {
                 let time = |text: String| RichText::new(text).monospace().color(media::TEXT);
-                if time_display == TimeDisplay::Normal {
+                if time_display == crate::settings::TimeDisplay::Normal {
                     ui.label(time(format_duration(shown)));
                 }
                 let time_w = 70.0;
@@ -563,8 +586,8 @@ fn controls(
                     player.seek(target, true);
                 }
                 ui.label(time(format_duration(match time_display {
-                    TimeDisplay::Normal => duration,
-                    TimeDisplay::Remaining => (duration - shown).max(0.0),
+                    crate::settings::TimeDisplay::Normal => duration,
+                    crate::settings::TimeDisplay::Remaining => (duration - shown).max(0.0),
                 })));
             });
 
@@ -577,9 +600,12 @@ fn controls(
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    if player_button(ui, icons::ARROW_LEFT, 22.0, "Back to the library (Esc)")
-                        .clicked()
-                    {
+                    let (back_icon, back_tip) = if np.close_when_done {
+                        (icons::X, "Close (Esc)")
+                    } else {
+                        (icons::ARROW_LEFT, "Back to the library (Esc)")
+                    };
+                    if player_button(ui, back_icon, 22.0, back_tip).clicked() {
                         actions.push(Action::StopPlayback { finished: false });
                     }
                     ui.add_space(10.0);
@@ -662,6 +688,40 @@ fn controls(
             );
         },
     );
+}
+
+/// The gear at the top right of the player, and the menu of player settings it opens. Changes
+/// apply straight away; they are saved once the menu closes.
+fn settings_menu(
+    ui: &mut egui::Ui,
+    top: Rect,
+    settings: &mut Settings,
+    software_gl: bool,
+    actions: &mut Vec<Action>,
+) {
+    let spot = Rect::from_center_size(
+        pos2(top.right() - 16.0 - 19.0, top.center().y),
+        Vec2::splat(38.0),
+    );
+    let button = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(spot), |ui| {
+            player_button(ui, icons::GEAR, 22.0, "Player settings")
+        })
+        .inner;
+    let dark = |style: &mut egui::Style| style.visuals = theme::visuals(&theme::DARK);
+    egui::Popup::from_toggle_button_response(&button)
+        .id(settings_menu_id())
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .align(egui::RectAlign::BOTTOM_END)
+        .style(dark)
+        .width(330.0)
+        .show(|ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.label(theme::bold("Player settings").size(15.0).color(media::TEXT));
+            if super::dialogs::player_settings(ui, settings, software_gl, media::TEXT_WEAK) {
+                actions.push(Action::PlayerSettingsChanged);
+            }
+        });
 }
 
 /// Netflix's slider, for seeking and volume: a thin red line on a grey track with a knob,
