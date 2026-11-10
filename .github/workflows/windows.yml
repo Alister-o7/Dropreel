@@ -2,7 +2,8 @@ name: Windows
 
 on:
   push:
-    branches: [main, master, "claude/**"]
+    # Every branch builds and tests.
+    branches: ["**"]
     # Pushing a version tag (e.g. v0.1.0) also publishes a GitHub Release.
     tags: ["v*"]
   pull_request:
