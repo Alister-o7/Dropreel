@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use dropreel::app::DropReelApp;
+use dropreel::instance::{self, Instance};
 use dropreel::paths::AppPaths;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
@@ -78,7 +79,17 @@ fn main() -> ExitCode {
         paths.root.display()
     );
 
-    let open_paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    // Absolute, as they may be handed to a Dropreel started elsewhere.
+    let open_paths: Vec<PathBuf> = std::env::args_os()
+        .skip(1)
+        .map(PathBuf::from)
+        .map(|p| std::path::absolute(&p).unwrap_or(p))
+        .collect();
+    let server = match instance::acquire(&paths.root, &open_paths) {
+        Instance::Forwarded => return ExitCode::SUCCESS,
+        Instance::Primary(server) => Some(server),
+        Instance::Alone => None,
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Dropreel")
@@ -93,7 +104,12 @@ fn main() -> ExitCode {
         "Dropreel",
         options,
         Box::new(move |cc| match DropReelApp::new(cc, paths, open_paths) {
-            Ok(app) => Ok(Box::new(app)),
+            Ok(app) => {
+                if let Some(server) = server {
+                    server.serve(app.external_opener());
+                }
+                Ok(Box::new(app))
+            }
             Err(e) => {
                 let message = format!("Dropreel could not start:\n{e:#}");
                 fatal(&message);

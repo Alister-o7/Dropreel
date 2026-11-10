@@ -86,9 +86,23 @@ You can also point Dropreel at your own `ffmpeg`/`ffprobe` in **Settings**, or h
 | Next episode | `N`, or the ⏭ button |
 | Fullscreen | `F` or double-click the video; `Esc` leaves fullscreen, then returns to the library |
 | Search | `Ctrl+F` |
+| Player settings | The ⚙ button at the top right of the player |
 
-The installer also adds Dropreel to Explorer's **Open with** menu for video files; opening a
-movie that way plays it (and adds it to the library if it's new).
+### As your video player
+
+The installer adds Dropreel to Explorer's **Open with** menu for video files and lists it under
+**Settings → Apps → Default apps**, so it can be your default video player (the
+**Choose default video player…** button in the player settings takes you there). It doesn't
+take over any file type by itself.
+
+A video opened from Explorer just plays: it isn't added to the library, and closing the player
+(`Esc`, or the ✕ button) closes Dropreel when it was started for that video. A video that's
+already in your library plays from there, from where you stopped. To have opened videos added
+to the library instead, choose **Videos opened from Explorer → Add them to the library** in the
+player settings.
+
+Only one Dropreel runs at a time: opening another video while it's running plays that video in
+the window that's already open.
 
 Data lives in `%APPDATA%\Dropreel`: `library.db` (SQLite), `settings.toml`, `cache\posters`
 and `logs`.
@@ -137,7 +151,7 @@ with ffmpeg once, and cache them under `target/`.
 |---|---|
 | `tests/library.rs` | Importing every supported container from nested folders, junk and partial files, duplicates, concurrent imports, moved/missing/removed files, Locate…, folder watching, search/sort/shelves/tags, episodes grouped into shows |
 | `tests/player.rs` | Real libmpv, headless: loading, resume, pause, seeking (including before a file has finished opening), end of file, truncated files, audio/subtitle tracks, volume, unplayable files, smooth motion |
-| `tests/ui.rs` | The whole app driven through its accessibility tree with egui_kittest: drag & drop, search, details, removal, settings, renaming and deleting tags, shows and Up next, toolbar layout at every width, small windows, playback controls, resume prompt, keyboard shortcuts, track menus, "Open with" |
+| `tests/ui.rs` | The whole app driven through its accessibility tree with egui_kittest: drag & drop, search, details, removal, settings, renaming and deleting tags, shows and Up next, toolbar layout at every width, small windows, playback controls, resume prompt, keyboard shortcuts, track menus, the player settings menu, "Open with" (just playing, adding to the library, a video handed over by a later launch) |
 | `tests/ffmpeg_pipeline.rs`, `tests/encode_queue.rs` | Probing, thumbnails, real HEVC encodes and verification |
 
 Suites skip themselves when ffmpeg or libmpv can't be found. Point `DROPREEL_LIBMPV` at

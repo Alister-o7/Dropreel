@@ -247,7 +247,8 @@ fn shown_time(app: &App) -> Option<u32> {
 }
 
 fn in_player(app: &App) -> bool {
-    has(app, "Back to the library (Esc)")
+    // "Close" when Dropreel was opened just to play a video.
+    has(app, "Back to the library (Esc)") || has(app, "Close (Esc)")
 }
 
 #[test]
@@ -943,23 +944,115 @@ fn unplayable_file_shows_an_error_and_returns_to_the_library() {
     until(&mut app, "the library", |a| !in_player(a));
 }
 
+/// Whether the app asked for its window to close (the harness itself stays open).
+fn asked_to_close(app: &App) -> bool {
+    app.state().is_closing()
+}
+
 #[test]
-fn open_with_plays_the_file_right_away() {
+fn opening_a_video_from_outside_just_plays_it_and_closing_the_player_closes_dropreel() {
     let Some(fx) = playback_setup() else { return };
     let root = tempfile::tempdir().unwrap();
     let file = copy_into(&fx.long, &root.path().join("movies"), None);
     let mut app = launch(root.path(), vec![file.clone()]);
     until(&mut app, "the player", |a| in_player(a) && has(a, "Pause"));
-    assert_eq!(db(root.path()).all_movies().unwrap().len(), 1);
-    click(&mut app, "Back to the library (Esc)");
+    // Not added to the library.
+    assert!(db(root.path()).all_movies().unwrap().is_empty());
+    click(&mut app, "Close (Esc)");
+    until(&mut app, "the window to close", asked_to_close);
     drop(app);
 
-    // Opening a file that is already in the library plays it too, without importing it again.
+    // Esc closes it too (leaving fullscreen first, when in it).
+    let mut app = launch(root.path(), vec![file]);
+    until(&mut app, "the player", |a| in_player(a) && has(a, "Pause"));
+    app.key_press(Key::Escape);
+    until(&mut app, "the window to close", asked_to_close);
+}
+
+#[test]
+fn opening_a_video_from_outside_can_add_it_to_the_library() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.long, &root.path().join("movies"), None);
+    std::fs::create_dir_all(root.path().join("data")).unwrap();
+    std::fs::write(
+        root.path().join("data").join("settings.toml"),
+        "open_files = \"add_to_library\"\n",
+    )
+    .unwrap();
+    let mut app = launch(root.path(), vec![file.clone()]);
+    until(&mut app, "the player", |a| in_player(a) && has(a, "Pause"));
+    assert_eq!(db(root.path()).all_movies().unwrap().len(), 1);
+    click(&mut app, "Back to the library (Esc)");
+    until(&mut app, "the library", |a| !in_player(a));
+    assert!(!asked_to_close(&app));
+    drop(app);
+
+    // Back to "just play": a video already in the library plays from there, keeping its place,
+    // without being imported again.
+    std::fs::write(root.path().join("data").join("settings.toml"), "").unwrap();
     let mut app = launch(root.path(), vec![file]);
     until(&mut app, "the player or resume prompt", |a| {
         in_player(a) || has_text(a, "Resume from")
     });
     assert_eq!(db(root.path()).all_movies().unwrap().len(), 1);
+}
+
+#[test]
+fn a_video_handed_over_by_a_later_launch_replaces_what_plays() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let first = copy_into(&fx.long, &root.path().join("movies"), None);
+    let second = copy_into(&fx.mkv, &root.path().join("movies"), None);
+    let mut app = launch(root.path(), vec![]);
+    drop_files(&mut app, std::slice::from_ref(&first));
+    until(&mut app, "the import", |a| has_text(a, "Added 1 movie"));
+    click(&mut app, "Play movie: Long Take");
+    until(&mut app, "the player", |a| {
+        in_player(a) && has(a, "Pause") && shown_time(a).is_some_and(|t| t > 60)
+    });
+    // Opened from Explorer while Dropreel runs: it plays here, and closing it goes back to the
+    // library, since Dropreel wasn't started for it.
+    app.state_mut().open_external(vec![second], false);
+    // The 6-second video, with the time left shown.
+    until(&mut app, "the second video", |a| {
+        in_player(a) && shown_time(a).is_some_and(|t| t <= 6)
+    });
+    assert!(has(&app, "Back to the library (Esc)"));
+    click(&mut app, "Back to the library (Esc)");
+    until(&mut app, "the library", |a| !in_player(a));
+    assert!(!asked_to_close(&app));
+    assert_eq!(db(root.path()).all_movies().unwrap().len(), 1);
+}
+
+#[test]
+fn the_player_settings_menu_changes_settings_on_the_spot() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.long, &root.path().join("movies"), None);
+    let mut app = launch(root.path(), vec![file]);
+    until(&mut app, "the player", |a| in_player(a) && has(a, "Pause"));
+    // Fresh settings show the time left.
+    until(&mut app, "the time left", |a| shown_time(a).is_some());
+    click(&mut app, "Player settings");
+    until(&mut app, "the menu", |a| has(a, "Smooth motion"));
+    click(&mut app, "Time played and length");
+    run_for(&mut app, Duration::from_millis(300));
+    // It applies at once; the menu stays open, and so do the controls.
+    assert!(has(&app, "Smooth motion"));
+    click(&mut app, "Add them to the library");
+    // Esc closes the menu, not the player; that saves the changes.
+    app.key_press(Key::Escape);
+    until(&mut app, "the menu to close", |a| !has(a, "Smooth motion"));
+    assert!(in_player(&app) && !asked_to_close(&app));
+    let settings = root.path().join("data").join("settings.toml");
+    until(&mut app, "the settings to be saved", |_| {
+        std::fs::read_to_string(&settings).is_ok_and(|t| t.contains("time_display = \"normal\""))
+    });
+    let text = std::fs::read_to_string(&settings).unwrap();
+    assert!(text.contains("open_files = \"add_to_library\""), "{text}");
+    // Still playing: neither the clicks in the menu nor Esc paused or stopped it.
+    assert!(has(&app, "Pause"));
 }
 
 #[test]

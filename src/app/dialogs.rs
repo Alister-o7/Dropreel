@@ -15,8 +15,8 @@ use crate::library::import::ImportReport;
 use crate::library::{Movie, MovieId, ShowId, Tag, TagId};
 use crate::metadata::tmdb::TmdbMovie;
 use crate::settings::{
-    EncodeQuality, EncoderChoice, HIDE_CONTROLS_RANGE, Settings, ThemeChoice, TimeDisplay,
-    X265_PRESETS,
+    EncodeQuality, EncoderChoice, HIDE_CONTROLS_RANGE, OpenFiles, Settings, ThemeChoice,
+    TimeDisplay, X265_PRESETS,
 };
 use crate::tools::Tools;
 use crate::util::{format_bytes, format_duration};
@@ -247,6 +247,110 @@ fn path_field(ui: &mut egui::Ui, id: &str, value: &mut Option<PathBuf>, found: O
     };
 }
 
+/// The player's settings, in Settings and in the player's own menu. Returns whether one changed.
+pub(super) fn player_settings(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    software_gl: bool,
+    note: Color32,
+) -> bool {
+    let mut changed = false;
+    ui.add_enabled_ui(!software_gl, |ui| {
+        changed |= ui
+            .checkbox(&mut settings.high_quality_video, "High-quality video scaling")
+            .on_hover_text("mpv's sharper scalers. Turn this off if videos show only a black picture.")
+            .changed();
+        changed |= ui
+            .checkbox(&mut settings.smooth_motion, "Smooth motion")
+            .on_hover_text("Syncs video to your monitor's refresh rate and blends frames, so pans don't judder. On some displays it makes playback look worse.")
+            .changed();
+    });
+    if software_gl {
+        ui.label(
+            RichText::new("Your PC is using software OpenGL, so simple scaling is always used and smooth motion is off.")
+                .size(12.5)
+                .color(note),
+        );
+    }
+    ui.horizontal(|ui| {
+        let label = ui.label("Hide the controls after");
+        let seconds = egui::DragValue::new(&mut settings.hide_controls_after)
+            .range(HIDE_CONTROLS_RANGE)
+            .speed(0.1)
+            .fixed_decimals(1)
+            .suffix(" s");
+        changed |= ui
+            .add(seconds)
+            .labelled_by(label.id)
+            .on_hover_text("How long the mouse can rest during playback before the controls and pointer fade away. Moving the mouse brings them back.")
+            .changed();
+    });
+    ui.add_space(4.0);
+    ui.label("Time shown");
+    for display in TimeDisplay::ALL {
+        changed |= ui
+            .radio_value(&mut settings.time_display, display, display.label())
+            .changed();
+    }
+    ui.add_space(4.0);
+    ui.label("Videos opened from Explorer")
+        .on_hover_text("With \"Open with\", or with Dropreel as your default video player.");
+    for choice in OpenFiles::ALL {
+        let hint = match choice {
+            OpenFiles::JustPlay => {
+                "They play without being added to the library, and closing the player closes Dropreel. Videos already in the library play from there."
+            }
+            OpenFiles::AddToLibrary => "They're added to the library first, then play.",
+        };
+        changed |= ui
+            .radio_value(&mut settings.open_files, choice, choice.label())
+            .on_hover_text(hint)
+            .changed();
+    }
+    if cfg!(windows)
+        && widgets::button(
+            ui,
+            ButtonKind::Secondary,
+            Some(icons::GEAR),
+            "Choose default video player…",
+        )
+        .on_hover_text(
+            "Opens Windows' Default apps settings, where you can make Dropreel open your videos.",
+        )
+        .clicked()
+    {
+        open_default_apps();
+    }
+    changed
+}
+
+/// Windows' Default apps settings, at Dropreel's page when the installer registered it there
+/// (Windows 11; Windows 10 shows the general page).
+fn open_default_apps() {
+    let exe = std::env::current_exe().ok();
+    let installed = exe
+        .as_ref()
+        .and_then(|e| e.parent())
+        .is_some_and(|dir| dir.join("unins000.exe").exists());
+    // Installed for this user alone, it lives under %LOCALAPPDATA%.
+    let per_user = exe
+        .as_ref()
+        .zip(std::env::var_os("LOCALAPPDATA"))
+        .is_some_and(|(e, local)| {
+            e.to_string_lossy()
+                .to_lowercase()
+                .starts_with(&local.to_string_lossy().to_lowercase())
+        });
+    let uri = match (installed, per_user) {
+        (true, true) => "ms-settings:defaultapps?registeredAppUser=Dropreel",
+        (true, false) => "ms-settings:defaultapps?registeredAppMachine=Dropreel",
+        (false, _) => "ms-settings:defaultapps",
+    };
+    if let Err(e) = opener::open(uri) {
+        tracing::warn!("could not open {uri}: {e}");
+    }
+}
+
 fn settings_section(ui: &mut egui::Ui, icon: &str, title: &str) {
     let p = palette(ui.ctx());
     ui.add_space(10.0);
@@ -357,30 +461,7 @@ fn settings_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
             path_field(ui, "ffprobe_path", &mut draft.ffprobe_path, found.ffprobe.as_ref());
 
             settings_section(ui, icons::MONITOR_PLAY, "Player");
-            ui.checkbox(&mut draft.high_quality_video, "High-quality video scaling")
-                .on_hover_text("mpv's sharper scalers. Turn this off if videos show only a black picture.");
-            ui.checkbox(&mut draft.smooth_motion, "Smooth motion")
-                .on_hover_text("Syncs video to your monitor's refresh rate and blends frames, so pans don't judder. On some displays it makes playback look worse.");
-            ui.horizontal(|ui| {
-                let label = ui.label("Hide the controls after");
-                let seconds = egui::DragValue::new(&mut draft.hide_controls_after)
-                    .range(HIDE_CONTROLS_RANGE)
-                    .speed(0.1)
-                    .fixed_decimals(1)
-                    .suffix(" s");
-                ui.add(seconds)
-                    .labelled_by(label.id)
-                    .on_hover_text("How long the mouse can rest during playback before the controls and pointer fade away. Moving the mouse brings them back.");
-            });
-            ui.horizontal(|ui| {
-                ui.label("Time shown");
-                for display in TimeDisplay::ALL {
-                    ui.radio_value(&mut draft.time_display, display, display.label());
-                }
-            });
-            if app.software_gl {
-                ui.label(RichText::new("Your PC is using software OpenGL, so simple scaling is always used and smooth motion is off.").size(12.5).color(p.text_weak));
-            }
+            player_settings(ui, draft, app.software_gl, p.text_weak);
             if let Err(e) = &app.player {
                 ui.label(RichText::new(format!("{} Built-in player unavailable: {e}", icons::WARNING)).color(p.danger));
             }
@@ -945,6 +1026,10 @@ fn resume_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
     });
     if done || close {
         app.resume_prompt = None;
+    }
+    if close && !done {
+        // Back in the library, so this is no longer playback Dropreel was opened for.
+        app.close_after = None;
     }
 }
 

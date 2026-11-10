@@ -32,7 +32,7 @@ use crate::library::{Db, MovieId, ShowId, TagId, scan};
 use crate::metadata::{self, tmdb::TmdbMovie};
 use crate::paths::AppPaths;
 use crate::player::Player;
-use crate::settings::{Settings, ThemeChoice};
+use crate::settings::{OpenFiles, Settings, ThemeChoice};
 use crate::tools::Tools;
 use dialogs::Dialogs;
 use events::{AppEvent, EventSink, ToastKind};
@@ -53,6 +53,8 @@ pub enum Action {
     /// Play now and countdown alike).
     PlayNextEpisode,
     PlaybackFailed(String),
+    /// A setting changed in the player's own menu: apply it now, save it once the menu closes.
+    PlayerSettingsChanged,
     ShowDetails(MovieId),
     /// Open a show's panel: its seasons and episodes.
     ShowShow(ShowId),
@@ -176,6 +178,13 @@ pub struct DropReelApp {
     allow_close: bool,
     /// A file opened with "Open with → Dropreel": play it once it's in the library.
     play_after_import: Option<PathBuf>,
+    /// The library movie being started for a video opened from outside, when Dropreel was
+    /// started just for it: once playing, closing the player closes Dropreel.
+    close_after: Option<MovieId>,
+    /// Settings changed in the player's menu and not yet saved.
+    settings_unsaved: bool,
+    /// The window was asked to close (after playing a video Dropreel was opened for).
+    closing: bool,
     /// Files a background scan failed to import that the user has already been told about.
     reported_failures: HashSet<PathBuf>,
 
@@ -285,6 +294,9 @@ impl DropReelApp {
             quit_prompt: false,
             allow_close: false,
             play_after_import: None,
+            close_after: None,
+            settings_unsaved: false,
+            closing: false,
             watchdog: watchdog::Watchdog::start(),
             reported_failures: HashSet::new(),
             reload_requested: false,
@@ -306,22 +318,117 @@ impl DropReelApp {
         if !app.settings.watched_folders.is_empty() {
             app.start_import(app.settings.watched_folders.clone(), false);
         }
-        if let [single] = open_paths.as_slice()
-            && scan::is_video_file(single)
-        {
-            // "Open with Dropreel" on one movie: play it (importing it first if needed).
-            let path = scan::normalize(single);
-            match app.find_movie_for_file(&path) {
-                Some(id) => app.actions.push(Action::Play(id)),
-                None => {
-                    app.play_after_import = Some(path);
-                    app.start_import(open_paths, false);
-                }
-            }
-        } else if !open_paths.is_empty() {
-            app.start_import(open_paths, true);
-        }
+        app.open_external(open_paths, true);
         Ok(app)
+    }
+
+    /// Opens what was handed to Dropreel from outside: the files it was started with ("Open
+    /// with", or Dropreel as the default player), or forwarded by a second launch. One video
+    /// plays (see [`OpenFiles`]); anything else is imported. `at_startup`: Dropreel was started
+    /// for these, so with "Just play" closing the player closes Dropreel too.
+    pub fn open_external(&mut self, paths: Vec<PathBuf>, at_startup: bool) {
+        if paths.is_empty() {
+            return;
+        }
+        tracing::info!("opening {paths:?} (at startup: {at_startup})");
+        let [single] = paths.as_slice() else {
+            self.start_import(paths, true);
+            return;
+        };
+        if !scan::is_video_file(single) {
+            self.start_import(paths, true);
+            return;
+        }
+        let path = scan::normalize(single);
+        if !path.is_file() {
+            self.toasts.add(
+                ToastKind::Error,
+                format!("{} was not found.", path.display()),
+            );
+            return;
+        }
+        // Without the built-in player there is nothing to play it with: handing it to the
+        // system's default player could be Dropreel again, and round and round.
+        if let Err(reason) = &self.player {
+            self.toasts.add(
+                ToastKind::Error,
+                format!("Could not play {}: {reason}", path.display()),
+            );
+            return;
+        }
+        // Whatever was playing gives way, its position saved.
+        if self.now_playing.is_some() {
+            self.end_playback(false, false);
+        }
+        self.resume_prompt = None;
+        self.close_after = None;
+        match (self.settings.open_files, self.find_movie_for_file(&path)) {
+            (_, Some(id)) => {
+                if at_startup && self.settings.open_files == OpenFiles::JustPlay {
+                    self.close_after = Some(id);
+                }
+                self.actions.push(Action::Play(id));
+            }
+            (OpenFiles::JustPlay, None) => self.play_file(&path, at_startup),
+            (OpenFiles::AddToLibrary, None) => {
+                self.play_after_import = Some(path);
+                self.start_import(paths, false);
+            }
+        }
+    }
+
+    /// Whether Dropreel asked for its window to close, its job done.
+    pub fn is_closing(&self) -> bool {
+        self.closing
+    }
+
+    /// Where later launches of Dropreel hand over their files: they open in this window, which
+    /// comes to the front.
+    pub fn external_opener(&self) -> impl Fn(Vec<PathBuf>) + Send + 'static {
+        let events = self.events.clone();
+        move |paths| {
+            let ctx = events.context();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            events.send(AppEvent::OpenPaths(paths));
+        }
+    }
+
+    /// Plays a video that isn't in the library, without adding it.
+    fn play_file(&mut self, path: &std::path::Path, close_when_done: bool) {
+        let Ok(player) = self.player.as_mut() else {
+            return;
+        };
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (title, subtitle) = match metadata::filename::parse_episode(path) {
+            Some(ep) => {
+                let code = format!("S{:02}E{:02}", ep.season, ep.episode);
+                let subtitle = match ep.title {
+                    Some(t) => format!("{code} · {t}"),
+                    None => code,
+                };
+                (ep.show, Some(subtitle))
+            }
+            None => (metadata::filename::parse_title_year(&stem).0, None),
+        };
+        let title = if title.is_empty() { stem } else { title };
+        tracing::info!("playing {} (not in the library)", path.display());
+        match player.load(path, None) {
+            Ok(()) => {
+                let mut np = player_view::NowPlaying::new(None, title, None);
+                np.subtitle = subtitle;
+                np.close_when_done = close_when_done;
+                self.now_playing = Some(np);
+                self.screen_fade = Some(Instant::now());
+            }
+            Err(e) => self.toasts.add(
+                ToastKind::Error,
+                format!("Could not play {}: {e}", path.display()),
+            ),
+        }
     }
 
     fn env(&self) -> LibraryEnv {
@@ -443,6 +550,7 @@ impl DropReelApp {
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 AppEvent::LibraryChanged => self.reload_requested = true,
+                AppEvent::OpenPaths(paths) => self.open_external(paths, false),
                 AppEvent::ImportProgress(p) => self.import_progress = Some(p),
                 AppEvent::ImportFinished {
                     mut report,
@@ -575,13 +683,26 @@ impl DropReelApp {
 
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         match action {
-            Action::Play(id) => self.play(id),
+            Action::Play(id) => {
+                if self.close_after.is_some_and(|c| c != id) {
+                    self.close_after = None;
+                }
+                self.play(id)
+            }
             Action::StartPlayback(id, start) => self.start_playback(id, start),
             Action::StopPlayback { finished } => self.stop_playback(finished, ctx),
             Action::PlayNextEpisode => self.play_next_episode(),
             Action::PlaybackFailed(message) => {
                 self.toasts.add(ToastKind::Error, message);
+                // Stay open to show why, even if Dropreel was opened just for this video.
+                if let Some(np) = self.now_playing.as_mut() {
+                    np.close_when_done = false;
+                }
                 self.stop_playback(false, ctx);
+            }
+            Action::PlayerSettingsChanged => {
+                self.apply_video_quality();
+                self.settings_unsaved = true;
             }
             Action::ShowDetails(id) => self.selected = Some(Detail::Movie(id)),
             Action::ShowShow(id) => self.selected = Some(Detail::Show(id)),
@@ -841,7 +962,9 @@ impl DropReelApp {
         tracing::info!("playing \"{}\" from {start:?}", movie.title);
         match player.load(&movie.path, start) {
             Ok(()) => {
-                let mut np = player_view::NowPlaying::new(id, movie.title.clone(), movie.duration);
+                let mut np =
+                    player_view::NowPlaying::new(Some(id), movie.title.clone(), movie.duration);
+                np.close_when_done = self.close_after.take() == Some(id);
                 if let Some(show) = movie.show_id.and_then(|s| self.lib.show(s)) {
                     let code = movie.episode_code().unwrap_or_default();
                     np.subtitle = Some(format!("{code} · {}", movie.title));
@@ -872,6 +995,9 @@ impl DropReelApp {
         let (Some(np), Ok(player)) = (self.now_playing.as_ref(), self.player.as_ref()) else {
             return;
         };
+        let Some(id) = np.movie_id else {
+            return; // Not in the library: nothing to remember.
+        };
         let dur = player.duration().or(np.known_duration);
         let resume = if finished {
             None
@@ -884,9 +1010,9 @@ impl DropReelApp {
                     .position()
                     .zip(dur)
                     .is_some_and(|(p, d)| p >= d * player_view::WATCHED_FRACTION);
-        let mut result = self.db.set_resume(np.movie_id, resume);
+        let mut result = self.db.set_resume(id, resume);
         if watched && result.is_ok() {
-            result = self.db.set_watched(np.movie_id, true);
+            result = self.db.set_watched(id, true);
         }
         self.db_result(result);
     }
@@ -897,6 +1023,13 @@ impl DropReelApp {
         let Some((next, _)) = self.now_playing.as_ref().and_then(|np| np.next.clone()) else {
             return;
         };
+        if self
+            .now_playing
+            .as_ref()
+            .is_some_and(|np| np.close_when_done)
+        {
+            self.close_after = Some(next);
+        }
         // The next file replaces this one in mpv directly: no stop in between, which would tear
         // down and rebuild the decoder and video output.
         self.end_playback(false, false);
@@ -908,7 +1041,14 @@ impl DropReelApp {
     }
 
     fn stop_playback(&mut self, finished: bool, ctx: &egui::Context) {
-        if self.now_playing.is_none() {
+        let Some(np) = &self.now_playing else {
+            return;
+        };
+        if np.close_when_done {
+            // Dropreel was opened just to play this.
+            self.end_playback(finished, true);
+            self.closing = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
         if finished && let Some(np) = &self.now_playing {
@@ -963,6 +1103,15 @@ impl DropReelApp {
                 self.reload();
             }
             Err(e) => self.toasts.add(ToastKind::Error, e),
+        }
+    }
+
+    /// Saves settings changed in the player's menu (already applied).
+    fn save_player_settings(&mut self) {
+        self.settings_unsaved = false;
+        if let Err(e) = self.settings.save(&self.paths.settings) {
+            self.toasts
+                .add(ToastKind::Error, format!("Could not save settings: {e:#}"));
         }
     }
 
@@ -1227,11 +1376,20 @@ impl eframe::App for DropReelApp {
         if self.imports_running > 0 {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
+        if self.settings_unsaved
+            && !(self.now_playing.is_some()
+                && egui::Popup::is_id_open(&ctx, player_view::settings_menu_id()))
+        {
+            self.save_player_settings();
+        }
         self.watchdog.frame_ended();
     }
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         self.save_playback_position(false);
+        if self.settings_unsaved {
+            self.save_player_settings();
+        }
         self.encode_queue.shutdown();
         if let Ok(player) = self.player.as_mut() {
             player.destroy(gl);

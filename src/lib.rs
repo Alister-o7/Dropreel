@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod encode;
+pub mod instance;
 pub mod library;
 pub mod metadata;
 pub mod paths;

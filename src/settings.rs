@@ -92,6 +92,31 @@ impl TimeDisplay {
     }
 }
 
+/// What happens to a video opened from outside Dropreel (Explorer's "Open with", or Dropreel as
+/// the default video player).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenFiles {
+    /// Play it like any video player: it isn't added to the library, and closing the player
+    /// closes Dropreel if it was opened just for this video. Videos already in the library play
+    /// from there, with their saved position.
+    #[default]
+    JustPlay,
+    /// Add it to the library, then play it.
+    AddToLibrary,
+}
+
+impl OpenFiles {
+    pub const ALL: [OpenFiles; 2] = [Self::JustPlay, Self::AddToLibrary];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::JustPlay => "Just play them",
+            Self::AddToLibrary => "Add them to the library",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeChoice {
@@ -136,6 +161,8 @@ pub struct Settings {
     /// Seconds without mouse movement before the player's controls fade out.
     pub hide_controls_after: f64,
     pub time_display: TimeDisplay,
+    /// Videos opened from Explorer.
+    pub open_files: OpenFiles,
 }
 
 impl Default for Settings {
@@ -155,6 +182,7 @@ impl Default for Settings {
             smooth_motion: false,
             hide_controls_after: 2.5,
             time_display: TimeDisplay::Remaining,
+            open_files: OpenFiles::JustPlay,
         }
     }
 }
@@ -272,6 +300,7 @@ mod tests {
             watched_folders: vec![PathBuf::from("D:/Movies")],
             tmdb_api_key: "abc".into(),
             encoder: EncoderChoice::Nvenc,
+            open_files: OpenFiles::AddToLibrary,
             ..Settings::default()
         };
         settings.save(&path).unwrap();
