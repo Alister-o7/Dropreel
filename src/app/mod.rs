@@ -405,7 +405,8 @@ impl DropReelApp {
             || self
                 .now_playing
                 .as_ref()
-                .is_some_and(|np| np.close_when_done);
+                .is_some_and(|np| np.close_when_done)
+            || self.prompt_closes();
         let videos = paths.iter().all(|p| scan::is_video_file(p) && p.is_file());
         if !videos || (paths.len() > 1 && self.settings.open_files == OpenFiles::AddToLibrary) {
             self.start_import(paths, true, None);
@@ -417,7 +418,8 @@ impl DropReelApp {
         let straggler = self
             .external_opened
             .is_some_and(|t| t.elapsed() < SELECTION_STRAGGLERS)
-            && self.now_playing.is_some();
+            // Playing, or asking where to resume, the first of the selection.
+            && (self.now_playing.is_some() || self.resume_prompt.is_some());
         if straggler {
             let mut all: Vec<PathBuf> = self.play_queue.drain(..).chain(queue).collect();
             all.sort();
@@ -536,7 +538,9 @@ impl DropReelApp {
                     position,
                     title: file_title(path).0,
                 });
-                if self.now_playing.is_none() {
+                // Asked over the library, unless Dropreel was opened just for this (then over
+                // the empty player, which may stay in fullscreen).
+                if self.now_playing.is_none() && !close_when_done {
                     self.events
                         .context()
                         .send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
@@ -571,6 +575,29 @@ impl DropReelApp {
                 format!("Could not play {}: {e}", path.display()),
             ),
         }
+    }
+
+    /// Whether the open resume question is about a video Dropreel was opened just to play.
+    fn prompt_closes(&self) -> bool {
+        self.resume_prompt
+            .as_ref()
+            .is_some_and(|p| match &p.target {
+                ResumeTarget::File {
+                    close_when_done, ..
+                } => *close_when_done,
+                ResumeTarget::Movie(id) => self.close_after == Some(*id),
+            })
+    }
+
+    /// Whether what comes next belongs to a video Dropreel was opened just to play: its resume
+    /// question, or a library movie about to start. The library mustn't show meanwhile.
+    fn opened_video_pending(&self) -> bool {
+        self.prompt_closes()
+            || self.close_after.is_some_and(|id| {
+                self.actions
+                    .iter()
+                    .any(|a| matches!(a, Action::Play(p) | Action::StartPlayback(p, _) if *p == id))
+            })
     }
 
     /// Asks the window to close: Dropreel was opened just to play a video, and that's done.
@@ -865,8 +892,15 @@ impl DropReelApp {
             } => self.start_file(&path, start, close_when_done),
             Action::ResumeDismissed { close } => {
                 self.close_after = None;
+                // The rest of a selection opened together goes too.
+                self.play_queue.clear();
                 if close {
                     self.close_window(ctx);
+                } else if self.now_playing.is_none()
+                    && let Ok(player) = self.player.as_mut()
+                {
+                    // A video before it in the queue may still be loaded.
+                    player.stop();
                 }
             }
             Action::StopPlayback { finished } => self.stop_playback(finished, ctx),
@@ -1138,7 +1172,7 @@ impl DropReelApp {
                     position: pos,
                     title: movie.title.clone(),
                 });
-                if self.now_playing.is_none() {
+                if self.now_playing.is_none() && self.close_after != Some(id) {
                     // The prompt shows over the library (e.g. for a video opened from Explorer
                     // while one played in fullscreen).
                     self.events
@@ -1598,7 +1632,7 @@ impl eframe::App for DropReelApp {
 
         if self.now_playing.is_some() {
             player_view::show(self, ui, frame);
-        } else if self.launching || self.closing {
+        } else if self.launching || self.closing || self.opened_video_pending() {
             // Started to play a video: what shows until it does is the player's own "Loading…",
             // not a glimpse of the library. Closing after it: just black until the window goes.
             player_view::empty(ui, !self.closing);

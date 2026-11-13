@@ -1093,6 +1093,46 @@ fn videos_outside_the_library_remember_where_they_were_left() {
 }
 
 #[test]
+fn the_next_of_several_videos_asks_where_to_resume_without_the_library() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("movies");
+    let short = copy_into(&fx.mkv, &dir, Some("A short one.mkv"));
+    let long = copy_into(&fx.long, &dir, Some("B long one.mkv"));
+    // The second was watched before, up to 0:40.
+    let mut app = launch(root.path(), vec![]);
+    let key = dropreel::library::scan::normalize(&long);
+    let size = std::fs::metadata(&long).unwrap().len();
+    db(root.path())
+        .set_file_position(&key, size, Some(40.0))
+        .unwrap();
+    app.state_mut()
+        .open_external(vec![short, long.clone()], true);
+    until(&mut app, "the short one", |a| {
+        in_player(a) && shown_time(a).is_some_and(|t| t <= 6)
+    });
+    // It ends, and the long one's question shows over the empty player.
+    let start = Instant::now();
+    while !has_text(&app, "Resume from") {
+        app.step();
+        assert!(
+            !has(&app, "Add movies") && !has(&app, "Settings"),
+            "the library showed between the videos"
+        );
+        assert!(start.elapsed() < TIMEOUT, "no question: {}", labels(&app));
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    // A late launch of the same selection doesn't drop the question.
+    app.state_mut().open_external(vec![long], false);
+    no_library_for(&mut app, 5, "after a late launch");
+    assert!(has_text(&app, "Resume from"), "{}", labels(&app));
+    // Closing the question closes Dropreel, which was opened just for these.
+    app.key_press(Key::Escape);
+    no_library_for(&mut app, 10, "after the question was closed");
+    assert!(asked_to_close(&app));
+}
+
+#[test]
 fn opening_a_video_from_outside_can_add_it_to_the_library() {
     let Some(fx) = playback_setup() else { return };
     let root = tempfile::tempdir().unwrap();
