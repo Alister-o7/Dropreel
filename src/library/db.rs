@@ -66,7 +66,18 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE movies ADD COLUMN season INTEGER;
     ALTER TABLE movies ADD COLUMN episode INTEGER;
     CREATE INDEX movies_show ON movies(show_id);",
+    // v5: where videos outside the library were left, by path (and size, to tell a file
+    // replaced under the same name)
+    "CREATE TABLE file_positions (
+        path     TEXT PRIMARY KEY,
+        size     INTEGER NOT NULL,
+        position REAL NOT NULL,
+        updated  INTEGER NOT NULL
+    );",
 ];
+
+/// How many videos outside the library keep their place; the oldest are forgotten first.
+const FILE_POSITIONS_KEPT: i64 = 1000;
 
 /// The schema version that introduced shows; upgrading past it sorts existing episodes into shows.
 const SHOWS_VERSION: usize = 4;
@@ -507,6 +518,51 @@ impl Db {
         Ok(())
     }
 
+    /// Where a video outside the library was left, if it is the same file (same size).
+    pub fn file_position(&self, path: &Path, size: u64) -> anyhow::Result<Option<f64>> {
+        let found = self
+            .conn
+            .query_row(
+                "SELECT position FROM file_positions WHERE path = ?1 AND size = ?2",
+                params![path_to_sql(path), size as i64],
+                |r| r.get::<_, f64>(0),
+            )
+            .optional()?;
+        Ok(found)
+    }
+
+    /// Remembers where a video outside the library was left; `None` forgets it (finished, or
+    /// barely started).
+    pub fn set_file_position(
+        &self,
+        path: &Path,
+        size: u64,
+        position: Option<f64>,
+    ) -> anyhow::Result<()> {
+        let path = path_to_sql(path);
+        match position {
+            Some(position) => {
+                self.conn.execute(
+                    "INSERT INTO file_positions (path, size, position, updated)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(path) DO UPDATE SET
+                        size = excluded.size, position = excluded.position, updated = excluded.updated",
+                    params![path, size as i64, position, now_unix()],
+                )?;
+                self.conn.execute(
+                    "DELETE FROM file_positions WHERE path NOT IN
+                        (SELECT path FROM file_positions ORDER BY updated DESC, rowid DESC LIMIT ?1)",
+                    [FILE_POSITIONS_KEPT],
+                )?;
+            }
+            None => {
+                self.conn
+                    .execute("DELETE FROM file_positions WHERE path = ?1", [path])?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn mark_played(&self, id: MovieId) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE movies SET last_played = ?2 WHERE id = ?1",
@@ -829,6 +885,37 @@ mod tests {
         assert_eq!(movies[0].title, "Old");
         let tag = db.create_tag("Favourites").unwrap();
         db.set_movie_tag(movies[0].id, tag, true).unwrap();
+    }
+
+    #[test]
+    fn positions_of_files_outside_the_library_are_kept_per_file() {
+        let db = Db::open_in_memory().unwrap();
+        let a = Path::new("C:/Downloads/a.mkv");
+        assert_eq!(db.file_position(a, 100).unwrap(), None);
+        db.set_file_position(a, 100, Some(61.5)).unwrap();
+        assert_eq!(db.file_position(a, 100).unwrap(), Some(61.5));
+        // Another file under the same name: not its place.
+        assert_eq!(db.file_position(a, 101).unwrap(), None);
+        db.set_file_position(a, 100, Some(90.0)).unwrap();
+        assert_eq!(db.file_position(a, 100).unwrap(), Some(90.0));
+        db.set_file_position(a, 100, None).unwrap();
+        assert_eq!(db.file_position(a, 100).unwrap(), None);
+        // Only the most recent are kept.
+        for i in 0..(FILE_POSITIONS_KEPT + 5) {
+            let p = PathBuf::from(format!("C:/many/{i}.mkv"));
+            db.set_file_position(&p, 1, Some(40.0)).unwrap();
+        }
+        let kept: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM file_positions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kept, FILE_POSITIONS_KEPT);
+        let newest = PathBuf::from(format!("C:/many/{}.mkv", FILE_POSITIONS_KEPT + 4));
+        assert_eq!(db.file_position(&newest, 1).unwrap(), Some(40.0));
+        assert_eq!(
+            db.file_position(Path::new("C:/many/0.mkv"), 1).unwrap(),
+            None
+        );
     }
 
     #[test]

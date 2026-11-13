@@ -1019,6 +1019,119 @@ fn opening_a_video_from_outside_never_shows_the_library_first() {
     until(&mut app, "the player", |a| in_player(a) && has(a, "Pause"));
 }
 
+/// Runs a few frames, failing if any shows the library.
+fn no_library_for(app: &mut App, frames: usize, what: &str) {
+    for _ in 0..frames {
+        app.step();
+        assert!(
+            !has(app, "Add movies") && !has(app, "Settings"),
+            "the library showed {what}"
+        );
+    }
+}
+
+#[test]
+fn closing_a_video_dropreel_was_opened_for_never_shows_the_library() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.long, &root.path().join("movies"), None);
+    let mut app = launch(root.path(), vec![file]);
+    until(&mut app, "the player", |a| in_player(a) && has(a, "Pause"));
+    // The ✕ at the bottom left, clicked within one frame.
+    find(&app, |t| t == "Close (Esc)").unwrap().click();
+    no_library_for(&mut app, 10, "while closing");
+    assert!(asked_to_close(&app));
+}
+
+#[test]
+fn videos_outside_the_library_remember_where_they_were_left() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let file = copy_into(&fx.long, &root.path().join("movies"), None);
+    let mut app = launch(root.path(), vec![file.clone()]);
+    until(&mut app, "the player", |a| in_player(a) && has(a, "Pause"));
+    for _ in 0..4 {
+        app.key_press(Key::ArrowRight);
+        app.step();
+    }
+    // Fresh settings show the time left: 1:30 long, so 0:50 or less once 40 s in.
+    until(&mut app, "the jump", |a| {
+        shown_time(a).is_some_and(|t| t <= 50)
+    });
+    app.key_press(Key::Escape);
+    until(&mut app, "the window to close", asked_to_close);
+    drop(app);
+    assert!(db(root.path()).all_movies().unwrap().is_empty());
+
+    // Opened again: it offers to carry on, over the empty player.
+    let mut app = launch(root.path(), vec![file.clone()]);
+    straight_to_the_player(&mut app, "a video with a saved place");
+    // Where it was left: at least the 40 s skipped (more if this machine is slow).
+    let offered = find(&app, |t| t.starts_with("Resume from "))
+        .and_then(|n| n.accesskit_node().label())
+        .and_then(|l| {
+            let (m, s) = l.trim_start_matches("Resume from ").split_once(':')?;
+            Some(m.parse::<u32>().ok()? * 60 + s.parse::<u32>().ok()?)
+        });
+    assert!(
+        offered.is_some_and(|t| (40..80).contains(&t)),
+        "{}",
+        labels(&app)
+    );
+    click_containing(&mut app, "Resume from");
+    until(&mut app, "playback from there", |a| {
+        in_player(a) && has(a, "Pause") && shown_time(a).is_some_and(|t| t <= 50)
+    });
+    drop(app);
+
+    // Closing the question instead closes Dropreel, without a glimpse of the library.
+    let mut app = launch(root.path(), vec![file]);
+    straight_to_the_player(&mut app, "a video with a saved place");
+    app.key_press(Key::Escape);
+    no_library_for(&mut app, 10, "after the question was closed");
+    assert!(asked_to_close(&app));
+}
+
+#[test]
+fn the_next_of_several_videos_asks_where_to_resume_without_the_library() {
+    let Some(fx) = playback_setup() else { return };
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("movies");
+    let short = copy_into(&fx.mkv, &dir, Some("A short one.mkv"));
+    let long = copy_into(&fx.long, &dir, Some("B long one.mkv"));
+    // The second was watched before, up to 0:40.
+    let mut app = launch(root.path(), vec![]);
+    let key = dropreel::library::scan::normalize(&long);
+    let size = std::fs::metadata(&long).unwrap().len();
+    db(root.path())
+        .set_file_position(&key, size, Some(40.0))
+        .unwrap();
+    app.state_mut()
+        .open_external(vec![short, long.clone()], true);
+    until(&mut app, "the short one", |a| {
+        in_player(a) && shown_time(a).is_some_and(|t| t <= 6)
+    });
+    // It ends, and the long one's question shows over the empty player.
+    let start = Instant::now();
+    while !has_text(&app, "Resume from") {
+        app.step();
+        assert!(
+            !has(&app, "Add movies") && !has(&app, "Settings"),
+            "the library showed between the videos"
+        );
+        assert!(start.elapsed() < TIMEOUT, "no question: {}", labels(&app));
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    // A late launch of the same selection doesn't drop the question.
+    app.state_mut().open_external(vec![long], false);
+    no_library_for(&mut app, 5, "after a late launch");
+    assert!(has_text(&app, "Resume from"), "{}", labels(&app));
+    // Closing the question closes Dropreel, which was opened just for these.
+    app.key_press(Key::Escape);
+    no_library_for(&mut app, 10, "after the question was closed");
+    assert!(asked_to_close(&app));
+}
+
 #[test]
 fn opening_a_video_from_outside_can_add_it_to_the_library() {
     let Some(fx) = playback_setup() else { return };

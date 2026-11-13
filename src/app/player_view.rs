@@ -49,6 +49,8 @@ pub struct NowPlaying {
     /// Close Dropreel when playback ends (Esc, Back or the end of the video): it was started
     /// just to play this video.
     pub close_when_done: bool,
+    /// A video outside the library: its path and size, to remember where it was left.
+    pub file: Option<(std::path::PathBuf, u64)>,
     pub title: String,
     /// For an episode: "S01E02 · Episode title", under the show's title.
     pub subtitle: Option<String>,
@@ -87,6 +89,7 @@ impl NowPlaying {
         Self {
             movie_id,
             close_when_done: false,
+            file: None,
             title,
             subtitle: None,
             next: None,
@@ -187,11 +190,15 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     if np.loaded {
         if np.last_save.elapsed() >= SAVE_INTERVAL {
             np.last_save = Instant::now();
-            if let Some(id) = np.movie_id
-                && let Some(p) = resume_position(pos, dur)
-                && let Err(e) = db.set_resume(id, Some(p))
-            {
-                tracing::warn!("could not save position: {e}");
+            if let Some(p) = resume_position(pos, dur) {
+                let saved = match (np.movie_id, &np.file) {
+                    (Some(id), _) => db.set_resume(id, Some(p)),
+                    (None, Some((path, size))) => db.set_file_position(path, *size, Some(p)),
+                    (None, None) => Ok(()),
+                };
+                if let Err(e) = saved {
+                    tracing::warn!("could not save position: {e}");
+                }
             }
         }
         if !np.watched_marked
@@ -357,11 +364,15 @@ pub fn show(app: &mut DropReelApp, ui: &mut egui::Ui, frame: &mut eframe::Frame)
     }
 }
 
-/// The empty player, while a video Dropreel was started for is being opened.
-pub fn opening(ui: &mut egui::Ui) {
+/// The empty player: while a video Dropreel was started for is being opened (`loading`), or
+/// while Dropreel closes after it.
+pub fn empty(ui: &mut egui::Ui, loading: bool) {
     egui::CentralPanel::no_frame()
         .frame(egui::Frame::NONE.fill(theme::ramp::N950))
         .show(ui, |ui| {
+            if !loading {
+                return;
+            }
             let rect = ui.max_rect();
             ui.painter().text(
                 rect.center(),

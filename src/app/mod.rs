@@ -42,6 +42,23 @@ use toasts::Toasts;
 const PREFS_KEY: &str = "dropreel-prefs";
 
 /// Things the UI asked for during a frame, applied after drawing.
+/// "Resume from …?" before playing something that has a saved place.
+pub(crate) struct ResumePrompt {
+    pub target: ResumeTarget,
+    pub position: f64,
+    pub title: String,
+}
+
+#[derive(Clone)]
+pub(crate) enum ResumeTarget {
+    Movie(MovieId),
+    /// A video outside the library.
+    File {
+        path: PathBuf,
+        close_when_done: bool,
+    },
+}
+
 /// How long Dropreel waits for more files from outside before opening what it got.
 const EXTERNAL_QUIET: Duration = Duration::from_millis(400);
 
@@ -69,6 +86,17 @@ pub enum Action {
     PlaybackFailed(String),
     /// A setting changed in the player's own menu: apply it now, save it once the menu closes.
     PlayerSettingsChanged,
+    /// Play a video outside the library, optionally from a saved place.
+    StartFile {
+        path: PathBuf,
+        start: Option<f64>,
+        close_when_done: bool,
+    },
+    /// The resume question was closed without an answer; `close`: Dropreel was opened just to
+    /// play that video, so it closes too.
+    ResumeDismissed {
+        close: bool,
+    },
     ShowDetails(MovieId),
     /// Open a show's panel: its seasons and episodes.
     ShowShow(ShowId),
@@ -177,7 +205,7 @@ pub struct DropReelApp {
     software_gl: bool,
     now_playing: Option<player_view::NowPlaying>,
     /// "Resume from …?" question: (movie, position).
-    resume_prompt: Option<(MovieId, f64)>,
+    resume_prompt: Option<ResumePrompt>,
 
     encode_queue: EncodeQueue,
     watchdog: watchdog::Watchdog,
@@ -377,7 +405,8 @@ impl DropReelApp {
             || self
                 .now_playing
                 .as_ref()
-                .is_some_and(|np| np.close_when_done);
+                .is_some_and(|np| np.close_when_done)
+            || self.prompt_closes();
         let videos = paths.iter().all(|p| scan::is_video_file(p) && p.is_file());
         if !videos || (paths.len() > 1 && self.settings.open_files == OpenFiles::AddToLibrary) {
             self.start_import(paths, true, None);
@@ -389,7 +418,8 @@ impl DropReelApp {
         let straggler = self
             .external_opened
             .is_some_and(|t| t.elapsed() < SELECTION_STRAGGLERS)
-            && self.now_playing.is_some();
+            // Playing, or asking where to resume, the first of the selection.
+            && (self.now_playing.is_some() || self.resume_prompt.is_some());
         if straggler {
             let mut all: Vec<PathBuf> = self.play_queue.drain(..).chain(queue).collect();
             all.sort();
@@ -493,31 +523,50 @@ impl DropReelApp {
 
     /// Plays a video that isn't in the library, without adding it.
     fn play_file(&mut self, path: &std::path::Path, close_when_done: bool) {
+        let size = std::fs::metadata(path).map_or(0, |m| m.len());
+        let saved = self.db.file_position(path, size).unwrap_or_else(|e| {
+            tracing::warn!("could not read the saved position: {e:#}");
+            None
+        });
+        match player_view::should_offer_resume(saved, None) {
+            Some(position) => {
+                self.resume_prompt = Some(ResumePrompt {
+                    target: ResumeTarget::File {
+                        path: path.to_path_buf(),
+                        close_when_done,
+                    },
+                    position,
+                    title: file_title(path).0,
+                });
+                // Asked over the library, unless Dropreel was opened just for this (then over
+                // the empty player, which may stay in fullscreen).
+                if self.now_playing.is_none() && !close_when_done {
+                    self.events
+                        .context()
+                        .send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                }
+            }
+            None => self.start_file(path, None, close_when_done),
+        }
+    }
+
+    /// Starts a video outside the library, from `start` seconds.
+    fn start_file(&mut self, path: &std::path::Path, start: Option<f64>, close_when_done: bool) {
         let Ok(player) = self.player.as_mut() else {
             return;
         };
-        let stem = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let (title, subtitle) = match metadata::filename::parse_episode(path) {
-            Some(ep) => {
-                let code = format!("S{:02}E{:02}", ep.season, ep.episode);
-                let subtitle = match ep.title {
-                    Some(t) => format!("{code} · {t}"),
-                    None => code,
-                };
-                (ep.show, Some(subtitle))
-            }
-            None => (metadata::filename::parse_title_year(&stem).0, None),
-        };
-        let title = if title.is_empty() { stem } else { title };
-        tracing::info!("playing {} (not in the library)", path.display());
-        match player.load(path, None) {
+        let size = std::fs::metadata(path).map_or(0, |m| m.len());
+        let (title, subtitle) = file_title(path);
+        tracing::info!(
+            "playing {} from {start:?} (not in the library)",
+            path.display()
+        );
+        match player.load(path, start) {
             Ok(()) => {
                 let mut np = player_view::NowPlaying::new(None, title, None);
                 np.subtitle = subtitle;
                 np.close_when_done = close_when_done;
+                np.file = Some((path.to_path_buf(), size));
                 self.now_playing = Some(np);
                 self.screen_fade = Some(Instant::now());
             }
@@ -526,6 +575,36 @@ impl DropReelApp {
                 format!("Could not play {}: {e}", path.display()),
             ),
         }
+    }
+
+    /// Whether the open resume question is about a video Dropreel was opened just to play.
+    fn prompt_closes(&self) -> bool {
+        self.resume_prompt
+            .as_ref()
+            .is_some_and(|p| match &p.target {
+                ResumeTarget::File {
+                    close_when_done, ..
+                } => *close_when_done,
+                ResumeTarget::Movie(id) => self.close_after == Some(*id),
+            })
+    }
+
+    /// Whether what comes next belongs to a video Dropreel was opened just to play: its resume
+    /// question, or a library movie about to start. The library mustn't show meanwhile.
+    fn opened_video_pending(&self) -> bool {
+        self.prompt_closes()
+            || self.close_after.is_some_and(|id| {
+                self.actions
+                    .iter()
+                    .any(|a| matches!(a, Action::Play(p) | Action::StartPlayback(p, _) if *p == id))
+            })
+    }
+
+    /// Asks the window to close: Dropreel was opened just to play a video, and that's done.
+    fn close_window(&mut self, ctx: &egui::Context) {
+        self.closing = true;
+        self.accept_other_launches(false);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     fn env(&self) -> LibraryEnv {
@@ -806,6 +885,24 @@ impl DropReelApp {
                 self.play(id)
             }
             Action::StartPlayback(id, start) => self.start_playback(id, start),
+            Action::StartFile {
+                path,
+                start,
+                close_when_done,
+            } => self.start_file(&path, start, close_when_done),
+            Action::ResumeDismissed { close } => {
+                self.close_after = None;
+                // The rest of a selection opened together goes too.
+                self.play_queue.clear();
+                if close {
+                    self.close_window(ctx);
+                } else if self.now_playing.is_none()
+                    && let Ok(player) = self.player.as_mut()
+                {
+                    // A video before it in the queue may still be loaded.
+                    player.stop();
+                }
+            }
             Action::StopPlayback { finished } => self.stop_playback(finished, ctx),
             Action::PlayNextEpisode => self.play_next_episode(),
             Action::PlaybackFailed(message) => {
@@ -1070,8 +1167,12 @@ impl DropReelApp {
         }
         match player_view::should_offer_resume(movie.resume_pos, movie.duration) {
             Some(pos) => {
-                self.resume_prompt = Some((id, pos));
-                if self.now_playing.is_none() {
+                self.resume_prompt = Some(ResumePrompt {
+                    target: ResumeTarget::Movie(id),
+                    position: pos,
+                    title: movie.title.clone(),
+                });
+                if self.now_playing.is_none() && self.close_after != Some(id) {
                     // The prompt shows over the library (e.g. for a video opened from Explorer
                     // while one played in fullscreen).
                     self.events
@@ -1127,14 +1228,19 @@ impl DropReelApp {
         let (Some(np), Ok(player)) = (self.now_playing.as_ref(), self.player.as_ref()) else {
             return;
         };
-        let Some(id) = np.movie_id else {
-            return; // Not in the library: nothing to remember.
-        };
         let dur = player.duration().or(np.known_duration);
         let resume = if finished {
             None
         } else {
             player_view::resume_position(player.position(), dur)
+        };
+        let Some(id) = np.movie_id else {
+            // Outside the library: just where it was left, for next time.
+            if let Some((path, size)) = &np.file {
+                let r = self.db.set_file_position(path, *size, resume);
+                self.db_result(r);
+            }
+            return;
         };
         let watched = finished
             || resume.is_none()
@@ -1187,9 +1293,7 @@ impl DropReelApp {
         if close_when_done {
             // Dropreel was opened just to play this.
             self.end_playback(finished, true);
-            self.closing = true;
-            self.accept_other_launches(false);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.close_window(ctx);
             return;
         }
         if finished && let Some(np) = &self.now_playing {
@@ -1476,6 +1580,31 @@ impl DropReelApp {
     }
 }
 
+/// What to call a video outside the library: its show and episode, or its title, from the
+/// file name.
+fn file_title(path: &std::path::Path) -> (String, Option<String>) {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (title, subtitle) = match metadata::filename::parse_episode(path) {
+        Some(ep) => {
+            let code = format!("S{:02}E{:02}", ep.season, ep.episode);
+            let subtitle = match ep.title {
+                Some(t) => format!("{code} · {t}"),
+                None => code,
+            };
+            (ep.show, Some(subtitle))
+        }
+        None => (metadata::filename::parse_title_year(&stem).0, None),
+    };
+    if title.is_empty() {
+        (stem, subtitle)
+    } else {
+        (title, subtitle)
+    }
+}
+
 impl eframe::App for DropReelApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.watchdog.frame_started();
@@ -1503,10 +1632,10 @@ impl eframe::App for DropReelApp {
 
         if self.now_playing.is_some() {
             player_view::show(self, ui, frame);
-        } else if self.launching {
+        } else if self.launching || self.closing || self.opened_video_pending() {
             // Started to play a video: what shows until it does is the player's own "Loading…",
-            // not a glimpse of the library.
-            player_view::opening(ui);
+            // not a glimpse of the library. Closing after it: just black until the window goes.
+            player_view::empty(ui, !self.closing);
         } else {
             // Nothing is playing, but mpv may still be sending replies and log messages about
             // the file that was.

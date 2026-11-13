@@ -9,7 +9,7 @@ use super::icons;
 use super::theme::{self, palette, radius};
 use super::watchdog;
 use super::widgets::{self, ButtonKind};
-use super::{Action, DropReelApp, OriginalChoice, PreviewDialog};
+use super::{Action, DropReelApp, OriginalChoice, PreviewDialog, ResumeTarget};
 use crate::encode::{EncodeOutcome, EncodePreview, Encoder};
 use crate::library::import::ImportReport;
 use crate::library::{Movie, MovieId, ShowId, Tag, TagId};
@@ -1017,11 +1017,22 @@ fn delete_tag_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
 }
 
 fn resume_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
-    let Some((id, pos)) = app.resume_prompt else {
+    let Some(prompt) = &app.resume_prompt else {
         return;
     };
+    let (target, pos, title) = (prompt.target.clone(), prompt.position, prompt.title.clone());
     let p = palette(ctx);
-    let title = app.lib.get(id).map(|m| m.title.clone()).unwrap_or_default();
+    let start = |at: Option<f64>| match &target {
+        ResumeTarget::Movie(id) => Action::StartPlayback(*id, at),
+        ResumeTarget::File {
+            path,
+            close_when_done,
+        } => Action::StartFile {
+            path: path.clone(),
+            start: at,
+            close_when_done: *close_when_done,
+        },
+    };
     let mut done = false;
     let ((), close) = modal(ctx, "resume_prompt", 400.0, |ui| {
         header(
@@ -1040,7 +1051,7 @@ fn resume_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
             )
             .clicked()
             {
-                app.actions.push(Action::StartPlayback(id, Some(pos)));
+                app.actions.push(start(Some(pos)));
                 done = true;
             }
             if widgets::button(
@@ -1051,7 +1062,7 @@ fn resume_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
             )
             .clicked()
             {
-                app.actions.push(Action::StartPlayback(id, None));
+                app.actions.push(start(None));
                 done = true;
             }
         });
@@ -1060,8 +1071,15 @@ fn resume_dialog(app: &mut DropReelApp, ctx: &egui::Context) {
         app.resume_prompt = None;
     }
     if close && !done {
-        // Back in the library, so this is no longer playback Dropreel was opened for.
-        app.close_after = None;
+        // Dropreel opened just for this video closes with the question; otherwise it's back to
+        // the library.
+        let close = match &target {
+            ResumeTarget::Movie(id) => app.close_after == Some(*id),
+            ResumeTarget::File {
+                close_when_done, ..
+            } => *close_when_done,
+        };
+        app.actions.push(Action::ResumeDismissed { close });
     }
 }
 
